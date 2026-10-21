@@ -43,6 +43,9 @@ const FORWARD_LABEL: Partial<Record<BookingStatus, string>> = {
   ready: 'Complete booking',
 }
 
+/** Mirrors the trusted edit operation. A ready booking is deliberately locked. */
+const EDITABLE_BOOKING_STATUSES: BookingStatus[] = ['enquiry', 'confirmed', 'in_production']
+
 export function BookingDetailPage() {
   const { id = '' } = useParams()
   const { profile } = useAuth()
@@ -169,7 +172,7 @@ export function BookingDetailPage() {
     }
     try {
       setFulfilBusy(true)
-      await updateBookingFulfilment({ bookingId: booking!.id, fulfillment, deliveryAddress, profile })
+      await updateBookingFulfilment({ bookingId: booking!.id, fulfillment, deliveryAddress })
       toast.success('Fulfilment details updated')
     } catch (error) {
       toast.error(friendlyFirebaseError(error))
@@ -188,6 +191,7 @@ export function BookingDetailPage() {
         eyebrow={`${outlet.name} · ${titleCase(booking.eventType)}`}
         title={booking.bookingNumber}
         description={`${booking.customerName} · Event ${formatDate(booking.eventDate)} at ${booking.eventTime} · Booked ${formatDateTime(booking.bookingDate)}`}
+        help="booking-edits"
         actions={
           <>
             <Button variant="outline" size="sm" asChild leftIcon={<Printer className="h-3.5 w-3.5" />}>
@@ -199,7 +203,7 @@ export function BookingDetailPage() {
             <Button variant="outline" size="sm" asChild leftIcon={<ChefHat className="h-3.5 w-3.5" />}>
               <Link to={`/admin/print/booking/${booking.id}/kitchen`} target="_blank">Ops slip</Link>
             </Button>
-            {canManage && booking.status !== 'completed' && booking.status !== 'cancelled' && (
+            {canManage && EDITABLE_BOOKING_STATUSES.includes(booking.status) && (
               <Button variant="outline" size="sm" asChild leftIcon={<Edit3 className="h-3.5 w-3.5" />}>
                 <Link to={`/admin/bookings/${booking.id}/edit`}>Edit booking</Link>
               </Button>
@@ -367,6 +371,10 @@ export function BookingDetailPage() {
 
             <section className="surface-card p-4 sm:p-5">
               <h2 className="font-display text-lg font-semibold">Fulfilment</h2>
+              <p className="mt-2 text-xs leading-relaxed text-ink-500">
+                The collection method and the delivery address are saved on the server. If this booking already has
+                a delivery that has not been dispatched, the delivery is kept in step with the new address.
+              </p>
               <div className="mt-3 space-y-3">
                 <SelectField
                   label="Method"

@@ -48,7 +48,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { to: adminPath('/orders'), label: 'Orders', icon: ClipboardList, permission: 'ordersView', description: 'Counter orders and queue' },
       { to: adminPath('/bookings'), label: 'Party bookings', icon: CalendarHeart, permission: 'bookingsView', description: 'Weddings, parties and catering' },
       { to: adminPath('/payments'), label: 'Payments', icon: WalletCards, permission: 'paymentsView', description: 'Cash, UPI and refunds' },
-      { to: adminPath('/deliveries'), label: 'Deliveries', icon: Truck, permission: 'deliveryView', description: 'Dispatch, proof and collection' },
+      { to: adminPath('/deliveries'), label: 'Deliveries', icon: Truck, permission: 'deliveryView', description: 'Dispatch, outcome and collection' },
     ],
   },
   {
@@ -76,7 +76,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'Reports',
     items: [
       { to: adminPath('/reports'), label: 'Reports', icon: ChartNoAxesCombined, permission: 'reportsView', description: 'Sales and operations reports' },
-      { to: adminPath('/busy'), label: 'Accounting export', icon: BookOpenCheck, permission: 'busyView', description: 'Export sales, payments and balances' },
+      { to: adminPath('/busy'), label: 'Accounting export', icon: BookOpenCheck, permission: 'busyView', description: 'Export sales and payments' },
     ],
   },
   {

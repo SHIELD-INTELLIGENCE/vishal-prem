@@ -10,6 +10,7 @@ All authoritative writes are served by Netlify Functions and call the Firebase A
 | `/.netlify/functions/adjust-product-stock` | `adjustProductStock` | Reads the live product balance, applies one signed manual adjustment with a mandatory reason, and atomically updates the product and writes an immutable `stockAdjustments` audit record. |
 | `/.netlify/functions/create-booking` | - | Reads the live outlet, customer, products and business tax mode; validates prices, stock and departments; computes totals; writes the booking and any advance payment with a receipt number in one transaction. |
 | `/.netlify/functions/update-booking` | - | Revalidates prices, discounts, tax, totals, stock and scope; preserves the paid amount; enforces a revision guard; and writes an append-only `bookingRevisions` snapshot with actor attribution. |
+| `/.netlify/functions/update-booking-fulfilment` | - | Records the collection method and the delivery address on the server. Direct client writes to those two fields are denied by the Firestore rules, so this is the only way to change them. It leaves prices, totals, paid money and the revision history untouched, and refreshes a delivery that has not been dispatched. |
 | `/.netlify/functions/record-booking-payment` | - | Writes a booking receipt/refund and the booking paid/balance/status fields atomically. Retries return the original receipt. |
 | `/.netlify/functions/production-operation` | - | Syncs confirmed source lines into department tasks, assigns staff, starts work, records partial completion, quality, rework, cancellation and event history. |
 | `/.netlify/functions/inventory-operation` | - | Creates raw-material/packaging items, posts append-only movements, physical counts, atomic transfers and metadata changes with idempotency and no-negative enforcement. |
@@ -111,6 +112,7 @@ netlify/functions/
   adjust-product-stock.mts
   create-booking.mts
   update-booking.mts
+  update-booking-fulfilment.mts
   record-booking-payment.mts
   production-operation.mts
   inventory-operation.mts
@@ -122,7 +124,7 @@ functions/src/backend/
   context.ts       live profile, permission and scope checks
   errors.ts        transport-neutral operation error codes
   orders.ts        createOrderForActor, cancelOrderForActor
-  bookings.ts      createBookingForActor, updateBookingForActor
+  bookings.ts      createBookingForActor, updateBookingForActor, updateBookingFulfilmentForActor
   payments.ts      order and booking payment operations
   products.ts      adjustProductStockForActor
   production.ts    queue, progress and quality operations
@@ -183,7 +185,7 @@ The emulator requires Java 21 or newer. On this machine `firebase-tools` resolve
 
 - `trackStock` and `conversionFactor` are locked after product creation. Changing either on an existing product needs a separate policy decision because it can reinterpret live stock quantities or future order consumption. Metadata edits preserve the current values.
 - Stock adjustment records are readable by scoped `inventoryAdjust` holders and Super Admins, but there is no adjustment-history screen yet. Records are written and retained for audit.
-- Booking creation, priced edits and booking payments are trusted server operations; direct client writes to bookings, booking revisions and payment records are denied by rules.
+- Booking creation, priced edits, fulfilment updates and booking payments are trusted server operations; direct client writes to bookings, booking revisions and payment records are denied by rules.
 - Recipes, automatic ingredient consumption, stock valuation, batch/expiry tracking, purchase-indent approval, route optimization, statutory tax filing and accounting integrations are not implemented.
 - App Check is not enforced. Enable it before treating Firebase ID token authentication as client integrity.
 - Netlify Functions, rules and production environment variables are **not deployed** from this workspace.

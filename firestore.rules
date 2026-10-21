@@ -258,6 +258,11 @@ service cloud.firestore {
       // Booking creation and priced edits are trusted operations. Direct
       // clients may only move operational fields that cannot rewrite prices,
       // totals, paid money, source links or revision history.
+      //
+      // Fulfilment and the delivery address decide what is physically loaded,
+      // so they are trusted-only. A direct write to either field is denied;
+      // the change must go through the update-booking-fulfilment operation,
+      // which also keeps a dispatchable delivery in step.
       allow create: if false;
 
       allow update: if (
@@ -273,7 +278,7 @@ service cloud.firestore {
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
              'status', 'cancelledAt', 'cancellationReason',
              'preparationStatus', 'packingStatus', 'instructions',
-             'fulfillment', 'deliveryAddress', 'updatedAt', 'updatedBy'
+             'updatedAt', 'updatedBy'
            ])
         && request.resource.data.status in [
              'enquiry', 'confirmed', 'in_production', 'ready', 'completed', 'cancelled'

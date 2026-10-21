@@ -421,8 +421,54 @@ describe('bookings, payments and customers', () => {
     await assertFails(updateDoc(doc(cake, 'bookings', 'booking-cake'), { paidPaise: 100 }))
   })
 
-  it('enforces booking status enums, legal transitions and cancellation fields', async () => {
+  it('denies direct fulfilment and delivery address writes but keeps operational updates', async () => {
     const cake = firestoreFor('cake')
+
+    // Fulfilment and the delivery address decide what is physically loaded.
+    // They are trusted-only, so a direct client write must be denied.
+    await assertFails(updateDoc(doc(cake, 'bookings', 'booking-cake'), {
+      fulfillment: 'delivery',
+      updatedAt: now,
+      updatedBy: 'cake',
+    }))
+    await assertFails(updateDoc(doc(cake, 'bookings', 'booking-cake'), {
+      deliveryAddress: '12 Main Road',
+      updatedAt: now,
+      updatedBy: 'cake',
+    }))
+    await assertFails(updateDoc(doc(cake, 'bookings', 'booking-cake'), {
+      fulfillment: 'delivery',
+      deliveryAddress: '12 Main Road',
+      updatedAt: now,
+      updatedBy: 'cake',
+    }))
+
+    // A Super Admin is bound by the same rule. Trusted operations run with the
+    // Admin SDK and are not evaluated against these client rules.
+    const superAdmin = firestoreFor('super')
+    await assertFails(updateDoc(doc(superAdmin, 'bookings', 'booking-cake'), {
+      fulfillment: 'delivery',
+      deliveryAddress: '12 Main Road',
+      updatedAt: now,
+      updatedBy: 'super',
+    }))
+
+    // Legitimate operational updates still work for the same actor.
+    await assertSucceeds(updateDoc(doc(cake, 'bookings', 'booking-cake'), {
+      preparationStatus: 'in_progress',
+      packingStatus: 'packed',
+      instructions: 'Pack in two boxes',
+      updatedAt: now,
+      updatedBy: 'cake',
+    }))
+    await assertSucceeds(updateDoc(doc(cake, 'bookings', 'booking-cake'), {
+      status: 'confirmed',
+      updatedAt: now,
+      updatedBy: 'cake',
+    }))
+  })
+
+  it('enforces booking status enums, legal transitions and cancellation fields', async () => {    const cake = firestoreFor('cake')
     await assertFails(updateDoc(doc(cake, 'bookings', 'booking-cake'), {
       status: 'completed',
       updatedAt: now,

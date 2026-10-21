@@ -150,6 +150,14 @@ Detailed threat model and limits: [docs/SECURITY.md](docs/SECURITY.md). Trusted 
 - Trusted order creation decrements tracked stock and writes the order inside one Firestore transaction. Cancellation restores stock from the immutable line snapshots. Manual adjustments use a separate trusted endpoint, require `inventoryAdjust` and a reason, and write an immutable audit record. Bookings check stock but do not reserve it.
 - Aadhaar numbers and identity documents are deliberately not part of the model. GSTIN and PAN are optional and should only be collected when a business transaction requires them.
 
+## Help and training
+
+`/admin/help` is the operational guide for the workspace. It carries one article per module, five role-based training paths, a daily open/run/close checklist, and a data-limits reference. Each article states the permission it needs, the prerequisites, the numbered steps with the real UI labels, the expected result, the common mistakes, the hard limits, and any workflow that is still unresolved.
+
+Unresolved workflows are shown as **Still unresolved** rather than described as settled. The current one is delivery reconciliation: a failed, returned, partially delivered or damaged delivery is recorded with a pending reconciliation status, and the app does not restock, write off, refund or change the source paid totals. The manual treatment is an owner or accountant decision, and there is no in-app resolution action.
+
+Known defects that are documented but **not** fixed are recorded in [docs/OPEN_ISSUES.md](docs/OPEN_ISSUES.md). The current entry is OI-001: a delivery created from an order keeps the customer address that was on the record when it was created, so a later address change does not reach the delivery.
+
 ## Printing
 
 Print routes render browser documents from saved records:
@@ -169,12 +177,12 @@ BUSY is **not connected**. The `/admin/busy` page exports dated CSV files for or
 | Check | Result |
 | --- | --- |
 | `npx tsc --noEmit` | Pass |
-| `npm test` | 292 unit tests pass (includes public/admin route tests and mocked token error mapping) |
+| `npm test` | 305 unit tests pass (includes public/admin route tests, Help content and Help centre interaction tests, and mocked token error mapping) |
 | `npm run lint` | Pass, no warnings |
 | `npm run build` | Pass; production bundle emits a chunk-size advisory |
 | `npm run functions:build` | Pass |
-| Firestore rules emulator | 91 tests pass against the real `firestore.rules` |
-| Functions emulator | 53 callable/endpoint tests pass against real Auth, Firestore and Functions emulators, including a local HTTP server in front of the Netlify handlers |
+| Firestore rules emulator | 92 tests pass against the real `firestore.rules` |
+| Functions emulator | 61 callable/endpoint tests pass against real Auth, Firestore and Functions emulators, including a local HTTP server in front of the Netlify handlers |
 | Storage rules emulator | 13 tests pass against the real `storage.rules` |
 | Physical printer | Not tested |
 | Real Firebase project flows | Blocked until Firestore, trusted Functions, credentials and the first admin are configured |

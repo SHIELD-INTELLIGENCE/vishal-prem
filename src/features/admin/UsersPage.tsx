@@ -597,7 +597,7 @@ export function UsersPage() {
                         <td className="text-right">
                           {status === 'pending' && (
                             <div className="flex justify-end gap-1">
-                              <Button size="sm" variant="ghost" onClick={() => void copyLink(`${window.location.origin}/join/${invite.token}`)} leftIcon={<Copy className="h-3.5 w-3.5" />}>Copy</Button>
+                              <Button size="sm" variant="ghost" onClick={() => void copyLink(`${window.location.origin}/admin/join/${invite.token}`)} leftIcon={<Copy className="h-3.5 w-3.5" />}>Copy</Button>
                               <Button size="sm" variant="ghost" onClick={() => void revokeInvite(invite).then(() => toast.success('Invitation revoked')).catch((error) => toast.error(friendlyFirebaseError(error)))} leftIcon={<Ban className="h-3.5 w-3.5" />}>Revoke</Button>
                             </div>
                           )}

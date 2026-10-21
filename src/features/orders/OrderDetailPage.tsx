@@ -9,6 +9,7 @@ import {
   CircleDollarSign,
   ClipboardCheck,
   Edit3,
+  FileText,
   PackageCheck,
   Printer,
   ReceiptText,
@@ -158,6 +159,7 @@ export function OrderDetailPage() {
         eyebrow={`${outlet.name} · ${department?.name ?? 'Department'}`}
         title={order.orderNumber}
         description={`${order.customerName} · ${formatDateTime(order.createdAt)} · ${order.channel === 'phone' ? 'Phone order' : 'Counter order'}`}
+        help="order-status"
         actions={
           <>
             <Button variant="outline" size="sm" asChild leftIcon={<Printer className="h-3.5 w-3.5" />}>
@@ -168,6 +170,9 @@ export function OrderDetailPage() {
             </Button>
             <Button variant="outline" size="sm" asChild leftIcon={<ShoppingBag className="h-3.5 w-3.5" />}>
               <Link to={`/admin/print/order/${order.id}/packing`} target="_blank">Packing</Link>
+            </Button>
+            <Button variant="outline" size="sm" asChild leftIcon={<FileText className="h-3.5 w-3.5" />}>
+              <Link to={`/admin/print/order/${order.id}/invoice`} target="_blank">Invoice</Link>
             </Button>
             {canPay && (
               <Button size="sm" onClick={() => setPaymentOpen(true)} leftIcon={<CircleDollarSign className="h-3.5 w-3.5" />}>

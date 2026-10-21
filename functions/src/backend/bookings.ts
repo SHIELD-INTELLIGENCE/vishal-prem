@@ -16,7 +16,9 @@ import type {
   BookingStatus,
   Business,
   Customer,
+  Delivery,
   DiscountType,
+  ID,
   OrderLine,
   Outlet,
   Product,
@@ -25,7 +27,9 @@ import type {
 import { getAdminDb } from '../admin'
 import { makeBookingNumber, makeReceiptNumber, serverNow } from '../utils'
 import { requireDepartmentScope, requireOutletScope, requirePermission } from './context'
+import { deliveryEventFor, deliveryLinesFromOrderLines } from './delivery'
 import { OperationError } from './errors'
+import type { UpdateBookingFulfilmentInput } from './validation'
 
 const EDITABLE_STATUSES: BookingStatus[] = ['enquiry', 'confirmed', 'in_production']
 
@@ -326,6 +330,28 @@ export async function updateBookingForActor(
     if ((live.revision ?? 0) !== input.expectedRevision) {
       throw new OperationError('failed-precondition', 'This booking changed while you were working. Refresh and try again.')
     }
+    // The approved policy allows edits while a delivery is still being
+    // prepared, but not after it has left the outlet. Read the deterministic
+    // booking-delivery record in the same transaction so a dispatch cannot
+    // race past the edit.
+    const deliverySnapshot = await transaction.get(
+      db.collection('deliveries').doc(`del-booking-${live.id}`),
+    )
+    const activeDelivery = deliverySnapshot.exists
+      ? (deliverySnapshot.data() as Delivery)
+      : null
+    if (activeDelivery && !['pending', 'assigned'].includes(activeDelivery.status)) {
+      throw new OperationError(
+        'failed-precondition',
+        'This booking has a delivery that has already been dispatched. Booking edits stop at dispatch.',
+      )
+    }
+    if (activeDelivery && values.fulfillment !== 'delivery') {
+      throw new OperationError(
+        'failed-precondition',
+        'This booking already has a delivery. Fulfilment cannot change until that delivery is closed.',
+      )
+    }
     if (live.status === 'in_production' && !values.editReason?.trim()) {
       throw new OperationError('failed-precondition', 'Enter a reason for editing a booking that is in production.')
     }
@@ -511,11 +537,131 @@ export async function updateBookingForActor(
     }
     transaction.set(db.collection('bookingRevisions').doc(revisionDoc.id), revisionDoc)
 
+    // A delivery that has not left the outlet yet must keep describing the
+    // booking it was created from. Bring the delivery snapshot back in step
+    // with the revised load, address, schedule, customer and departments so a
+    // later dispatch cannot carry a superseded load.
+    if (activeDelivery) {
+      const deliveryRef = db.collection('deliveries').doc(activeDelivery.id)
+      const patch = {
+        customerName: customer?.name ?? live.customerName,
+        customerPhone: customer?.phone ?? live.customerPhone,
+        address: values.deliveryAddress?.trim() || '',
+        scheduledAt: new Date(`${values.eventDate}T${values.eventTime || '23:59'}:00`).toISOString(),
+        departmentIds: [...values.departmentIds],
+        notes: values.instructions?.trim() || '',
+        lines: deliveryLinesFromOrderLines(lines),
+        updatedAt: now,
+        updatedBy: profile.uid,
+      }
+      transaction.update(deliveryRef, patch)
+      transaction.set(
+        db.collection('deliveryEvents').doc(),
+        deliveryEventFor(
+          { ...activeDelivery, ...patch },
+          'source_updated',
+          actorName,
+          now,
+          `Booking revision ${revision} applied to this delivery`,
+        ),
+      )
+    }
+
     return {
       bookingId: live.id,
       revision,
       totalPaise: totals.totalPaise,
       balancePaise: totals.totalPaise - live.paidPaise,
+    }
+  })
+}
+
+export interface UpdateBookingFulfilmentResult {
+  bookingId: ID
+  fulfillment: Booking['fulfillment']
+  deliveryAddress: string
+  deliveryId?: ID
+}
+
+/**
+ * Trusted fulfilment update.
+ *
+ * Fulfilment and the delivery address decide what is physically loaded, so
+ * they cannot be written directly by a client. This operation records them on
+ * the server, keeps a delivery that has not left the outlet in step, and
+ * leaves prices, totals, paid money and the revision history untouched.
+ */
+export async function updateBookingFulfilmentForActor(
+  profile: UserProfile,
+  input: UpdateBookingFulfilmentInput,
+): Promise<UpdateBookingFulfilmentResult> {
+  requirePermission(profile, 'bookingsManage')
+  const values = input
+  const db = getAdminDb()
+  const now = serverNow()
+  const actorName = profile.displayName?.trim() || profile.email || profile.uid
+
+  return db.runTransaction(async (transaction) => {
+    const bookingRef = db.collection('bookings').doc(values.bookingId)
+    const bookingSnapshot = await transaction.get(bookingRef)
+    if (!bookingSnapshot.exists) throw new OperationError('not-found', 'This booking no longer exists.')
+    const live = { ...(bookingSnapshot.data() as Booking), id: bookingSnapshot.id }
+    requireOutletScope(profile, live.outletId)
+    if (!Array.isArray(live.departmentIds) || !Array.isArray(live.lines)) {
+      throw new OperationError('failed-precondition', 'This booking has unreadable department or line data. No changes were made.')
+    }
+    for (const departmentId of live.departmentIds) requireDepartmentScope(profile, departmentId)
+    for (const line of live.lines) {
+      if (typeof line.departmentId === 'string' && line.departmentId) {
+        requireDepartmentScope(profile, line.departmentId)
+      }
+    }
+
+    const address = values.fulfillment === 'delivery' ? (values.deliveryAddress?.trim() || '') : ''
+    if (values.fulfillment === 'delivery' && !address) {
+      throw new OperationError('invalid-argument', 'Add a delivery address, or switch to pickup.')
+    }
+
+    // A delivery that has not left the outlet must keep the same address, and
+    // it only makes sense for a delivery booking while that delivery exists.
+    const deliverySnapshot = await transaction.get(
+      db.collection('deliveries').doc(`del-booking-${live.id}`),
+    )
+    const delivery = deliverySnapshot.exists ? (deliverySnapshot.data() as Delivery) : null
+    if (delivery && ['pending', 'assigned'].includes(delivery.status)) {
+      if (values.fulfillment !== 'delivery') {
+        throw new OperationError(
+          'failed-precondition',
+          'This booking already has a delivery. Fulfilment cannot change until that delivery is closed.',
+        )
+      }
+      const deliveryRef = db.collection('deliveries').doc(delivery.id)
+      const patch = { address, updatedAt: now, updatedBy: profile.uid }
+      transaction.update(deliveryRef, patch)
+      transaction.set(
+        db.collection('deliveryEvents').doc(),
+        deliveryEventFor(
+          { ...delivery, ...patch },
+          'source_updated',
+          actorName,
+          now,
+          'Booking fulfilment details updated',
+        ),
+      )
+    }
+
+    transaction.update(bookingRef, {
+      fulfillment: values.fulfillment,
+      deliveryAddress: address,
+      updatedAt: now,
+      updatedBy: profile.uid,
+    })
+
+    return {
+      bookingId: live.id,
+      fulfillment: values.fulfillment,
+      deliveryAddress: address,
+      deliveryId: delivery?.id,
     }
   })
 }

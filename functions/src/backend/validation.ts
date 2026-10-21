@@ -335,3 +335,27 @@ export const createBookingInputSchema = z
   .strict()
 
 export type CreateBookingInput = z.infer<typeof createBookingInputSchema>
+
+/**
+ * Fulfilment and delivery address for an existing booking. These fields drive
+ * what is physically loaded, so they are only changed through this trusted
+ * operation; direct client writes to them are denied by the Firestore rules.
+ */
+export const updateBookingFulfilmentInputSchema = z
+  .object({
+    bookingId: documentId,
+    fulfillment: z.enum(['pickup', 'delivery']),
+    deliveryAddress: z.string().trim().max(300).optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.fulfillment === 'delivery' && !value.deliveryAddress?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['deliveryAddress'],
+        message: 'Add a delivery address, or switch to pickup.',
+      })
+    }
+  })
+
+export type UpdateBookingFulfilmentInput = z.infer<typeof updateBookingFulfilmentInputSchema>

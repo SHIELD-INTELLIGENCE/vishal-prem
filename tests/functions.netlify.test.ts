@@ -31,6 +31,7 @@ import financeOperationHandler from '../netlify/functions/finance-operation.mts'
 import staffDirectoryHandler from '../netlify/functions/staff-directory.mts'
 import createBookingHandler from '../netlify/functions/create-booking.mts'
 import updateBookingHandler from '../netlify/functions/update-booking.mts'
+import updateBookingFulfilmentHandler from '../netlify/functions/update-booking-fulfilment.mts'
 
 const PROJECT_ID = 'vishal-prem-functions-test'
 const FIRESTORE_HOST = '127.0.0.1'
@@ -60,6 +61,7 @@ const ROUTES: Record<string, Handler> = {
   '/.netlify/functions/staff-directory': staffDirectoryHandler,
   '/.netlify/functions/create-booking': createBookingHandler,
   '/.netlify/functions/update-booking': updateBookingHandler,
+  '/.netlify/functions/update-booking-fulfilment': updateBookingFulfilmentHandler,
 }
 
 let testEnv: RulesTestEnvironment
@@ -1728,6 +1730,388 @@ describe('Trusted booking creation and edits', () => {
       412,
       'failed-precondition',
     )
+  })
+
+  it('allows booking edits until dispatch and blocks them once the delivery is dispatched', async () => {
+    await adminDb.doc('customers/c-booking').set(customerPayload())
+    const bookingId = 'booking-dispatch'
+    await adminDb.doc(`bookings/${bookingId}`).set(bookingPayload(bookingId, {
+      fulfillment: 'delivery',
+      deliveryAddress: '12 Main Road',
+    }))
+    const token = await tokenFor('manager')
+
+    const created = await post('/.netlify/functions/delivery-operation', {
+      action: 'create',
+      sourceType: 'booking',
+      sourceId: bookingId,
+    }, { token })
+    expect(created.status).toBe(200)
+
+    const edit = {
+      customerId: 'c-booking',
+      eventType: 'birthday',
+      eventDate: '2026-12-02',
+      eventTime: '19:00',
+      fulfillment: 'delivery',
+      deliveryAddress: '12 Main Road',
+      departmentIds: ['d1'],
+      instructions: 'Updated before dispatch',
+      lines: [{
+        id: 'booking-dispatch-line-1', productId: 'prod-cake', quantity: 1,
+        unitPrice: 110, discountPercent: 0, notes: '',
+      }],
+      discountType: 'none',
+      discountValue: 0,
+      editReason: '',
+    }
+
+    const pendingEdit = await post('/.netlify/functions/update-booking', {
+      bookingId,
+      expectedRevision: 1,
+      values: edit,
+    }, { token })
+    expect(pendingEdit.status).toBe(200)
+    expect((await json(pendingEdit)).revision).toBe(2)
+
+    const deliveryId = `del-booking-${bookingId}`
+    expect((await post('/.netlify/functions/delivery-operation', {
+      action: 'assign',
+      deliveryId,
+      assignedTo: 'manager',
+    }, { token })).status).toBe(200)
+    expect((await post('/.netlify/functions/delivery-operation', {
+      action: 'dispatch',
+      deliveryId,
+    }, { token })).status).toBe(200)
+
+    await expectFailure(
+      await post('/.netlify/functions/update-booking', {
+        bookingId,
+        expectedRevision: 2,
+        values: { ...edit, instructions: 'Dispatch already happened' },
+      }, { token }),
+      412,
+      'failed-precondition',
+    )
+    expect((await adminDb.doc(`bookings/${bookingId}`).get()).data()?.revision).toBe(2)
+    expect((await adminDb.collection('bookingRevisions').get()).docs).toHaveLength(1)
+  })
+
+  it('keeps a dispatchable delivery in step with an edited booking', async () => {
+    await adminDb.doc('customers/c-booking').set(customerPayload())
+    const bookingId = 'booking-sync'
+    await adminDb.doc(`bookings/${bookingId}`).set(bookingPayload(bookingId, {
+      fulfillment: 'delivery',
+      deliveryAddress: '12 Main Road',
+    }))
+    const token = await tokenFor('manager')
+
+    const created = await post('/.netlify/functions/delivery-operation', {
+      action: 'create',
+      sourceType: 'booking',
+      sourceId: bookingId,
+    }, { token })
+    expect(created.status).toBe(200)
+    const deliveryId = `del-booking-${bookingId}`
+    const before = (await adminDb.doc(`deliveries/${deliveryId}`).get()).data()
+    expect(before?.lines[0].expectedQty).toBe(1)
+    expect(before?.address).toBe('12 Main Road')
+
+    const edit = {
+      customerId: 'c-booking',
+      eventType: 'birthday',
+      eventDate: '2026-12-03',
+      eventTime: '19:30',
+      fulfillment: 'delivery',
+      deliveryAddress: '45 Park Lane',
+      departmentIds: ['d1'],
+      instructions: 'Three boxes, call on arrival',
+      lines: [{
+        id: `${bookingId}-line-1`, productId: 'prod-cake', quantity: 3,
+        unitPrice: 110, discountPercent: 0, notes: '',
+      }],
+      discountType: 'none',
+      discountValue: 0,
+      editReason: 'Customer changed the load',
+    }
+
+    const edited = await post('/.netlify/functions/update-booking', {
+      bookingId,
+      expectedRevision: 1,
+      values: edit,
+    }, { token })
+    expect(edited.status).toBe(200)
+
+    const delivery = (await adminDb.doc(`deliveries/${deliveryId}`).get()).data()
+    expect(delivery?.lines).toHaveLength(1)
+    expect(delivery?.lines[0].expectedQty).toBe(3)
+    expect(delivery?.address).toBe('45 Park Lane')
+    expect(delivery?.notes).toBe('Three boxes, call on arrival')
+    expect(delivery?.scheduledAt).toBe(new Date('2026-12-03T19:30:00').toISOString())
+    expect(delivery?.status).toBe('pending')
+
+    const events = await adminDb.collection('deliveryEvents')
+      .where('deliveryId', '==', deliveryId)
+      .where('action', '==', 'source_updated')
+      .get()
+    expect(events.docs).toHaveLength(1)
+
+    expect((await post('/.netlify/functions/delivery-operation', {
+      action: 'assign',
+      deliveryId,
+      assignedTo: 'manager',
+    }, { token })).status).toBe(200)
+    expect((await post('/.netlify/functions/delivery-operation', {
+      action: 'dispatch',
+      deliveryId,
+    }, { token })).status).toBe(200)
+  })
+
+  it('refuses to dispatch a delivery that no longer matches its booking', async () => {
+    await adminDb.doc('customers/c-booking').set(customerPayload())
+    const bookingId = 'booking-stale'
+    await adminDb.doc(`bookings/${bookingId}`).set(bookingPayload(bookingId, {
+      fulfillment: 'delivery',
+      deliveryAddress: '12 Main Road',
+    }))
+    const token = await tokenFor('manager')
+    const deliveryId = `del-booking-${bookingId}`
+
+    expect((await post('/.netlify/functions/delivery-operation', {
+      action: 'create',
+      sourceType: 'booking',
+      sourceId: bookingId,
+    }, { token })).status).toBe(200)
+    expect((await post('/.netlify/functions/delivery-operation', {
+      action: 'assign',
+      deliveryId,
+      assignedTo: 'manager',
+    }, { token })).status).toBe(200)
+
+    // A change that did not come through the trusted booking edit, for example
+    // the direct fulfilment and address write the rules still allow.
+    await adminDb.doc(`bookings/${bookingId}`).update({ deliveryAddress: '99 Somewhere Else' })
+
+    await expectFailure(
+      await post('/.netlify/functions/delivery-operation', {
+        action: 'dispatch',
+        deliveryId,
+      }, { token }),
+      412,
+      'failed-precondition',
+    )
+    const delivery = (await adminDb.doc(`deliveries/${deliveryId}`).get()).data()
+    expect(delivery?.status).toBe('assigned')
+    expect(delivery?.dispatchedAt).toBeUndefined()
+  })
+
+  it('still allows a failed delivery to be closed after the source booking is cancelled', async () => {
+    await adminDb.doc('customers/c-booking').set(customerPayload())
+    const bookingId = 'booking-cancelled-source'
+    await adminDb.doc(`bookings/${bookingId}`).set(bookingPayload(bookingId, {
+      fulfillment: 'delivery',
+      deliveryAddress: '12 Main Road',
+    }))
+    const token = await tokenFor('manager')
+    const deliveryId = `del-booking-${bookingId}`
+
+    expect((await post('/.netlify/functions/delivery-operation', {
+      action: 'create',
+      sourceType: 'booking',
+      sourceId: bookingId,
+    }, { token })).status).toBe(200)
+    expect((await post('/.netlify/functions/delivery-operation', {
+      action: 'assign',
+      deliveryId,
+      assignedTo: 'manager',
+    }, { token })).status).toBe(200)
+
+    // The customer cancelled the booking before the load left.
+    await adminDb.doc(`bookings/${bookingId}`).update({
+      status: 'cancelled',
+      cancelledAt: NOW,
+      cancellationReason: 'Customer cancelled',
+    })
+
+    await expectFailure(
+      await post('/.netlify/functions/delivery-operation', {
+        action: 'dispatch',
+        deliveryId,
+      }, { token }),
+      412,
+      'failed-precondition',
+    )
+
+    const closed = await post('/.netlify/functions/delivery-operation', {
+      action: 'complete',
+      deliveryId,
+      status: 'failed',
+      lines: [{ lineId: `${bookingId}-line-1`, deliveredQty: 0, returnedQty: 1, damagedQty: 0 }],
+      note: 'Booking cancelled, goods returned to the counter',
+    }, { token })
+    expect(closed.status).toBe(200)
+    const delivery = (await adminDb.doc(`deliveries/${deliveryId}`).get()).data()
+    expect(delivery?.status).toBe('failed')
+    expect(delivery?.reconciliationStatus).toBe('pending')
+  })
+
+  it('refuses to switch a booking to pickup while a delivery exists', async () => {
+    await adminDb.doc('customers/c-booking').set(customerPayload())
+    const bookingId = 'booking-fulfilment'
+    await adminDb.doc(`bookings/${bookingId}`).set(bookingPayload(bookingId, {
+      fulfillment: 'delivery',
+      deliveryAddress: '12 Main Road',
+    }))
+    const token = await tokenFor('manager')
+    const deliveryId = `del-booking-${bookingId}`
+
+    expect((await post('/.netlify/functions/delivery-operation', {
+      action: 'create',
+      sourceType: 'booking',
+      sourceId: bookingId,
+    }, { token })).status).toBe(200)
+
+    await expectFailure(
+      await post('/.netlify/functions/update-booking', {
+        bookingId,
+        expectedRevision: 1,
+        values: {
+          customerId: 'c-booking',
+          eventType: 'birthday',
+          eventDate: '2026-12-01',
+          eventTime: '18:00',
+          fulfillment: 'pickup',
+          deliveryAddress: '',
+          departmentIds: ['d1'],
+          instructions: '',
+          lines: [{
+            id: `${bookingId}-line-1`, productId: 'prod-cake', quantity: 1,
+            unitPrice: 100, discountPercent: 0, notes: '',
+          }],
+          discountType: 'none',
+          discountValue: 0,
+          editReason: '',
+        },
+      }, { token }),
+      412,
+      'failed-precondition',
+    )
+    expect((await adminDb.doc(`bookings/${bookingId}`).get()).data()?.fulfillment).toBe('delivery')
+    expect((await adminDb.doc(`bookings/${bookingId}`).get()).data()?.revision).toBe(1)
+    expect((await adminDb.collection('bookingRevisions').get()).docs).toHaveLength(0)
+    const delivery = (await adminDb.doc(`deliveries/${deliveryId}`).get()).data()
+    expect(delivery?.status).toBe('pending')
+    expect(delivery?.lines[0].expectedQty).toBe(1)
+  })
+
+  it('records a fulfilment change through the trusted operation and keeps a dispatchable delivery in step', async () => {
+    await adminDb.doc('customers/c-booking').set(customerPayload())
+    const bookingId = 'booking-fulfilment-op'
+    await adminDb.doc(`bookings/${bookingId}`).set(bookingPayload(bookingId, {
+      fulfillment: 'delivery',
+      deliveryAddress: '12 Main Road',
+    }))
+    const token = await tokenFor('manager')
+    const deliveryId = `del-booking-${bookingId}`
+
+    expect((await post('/.netlify/functions/delivery-operation', {
+      action: 'create',
+      sourceType: 'booking',
+      sourceId: bookingId,
+    }, { token })).status).toBe(200)
+
+    const response = await post('/.netlify/functions/update-booking-fulfilment', {
+      bookingId,
+      fulfillment: 'delivery',
+      deliveryAddress: '45 Park Lane',
+    }, { token })
+    expect(response.status).toBe(200)
+    expect((await json(response)).deliveryAddress).toBe('45 Park Lane')
+
+    const booking = (await adminDb.doc(`bookings/${bookingId}`).get()).data()
+    expect(booking?.fulfillment).toBe('delivery')
+    expect(booking?.deliveryAddress).toBe('45 Park Lane')
+    // An operational change: no repricing, no revision, no paid money moved.
+    expect(booking?.revision).toBe(1)
+    expect(booking?.totalPaise).toBe(10000)
+    expect(booking?.paidPaise).toBe(0)
+
+    const delivery = (await adminDb.doc(`deliveries/${deliveryId}`).get()).data()
+    expect(delivery?.address).toBe('45 Park Lane')
+
+    const events = await adminDb.collection('deliveryEvents')
+      .where('deliveryId', '==', deliveryId)
+      .where('action', '==', 'source_updated')
+      .get()
+    expect(events.docs).toHaveLength(1)
+  })
+
+  it('refuses a delivery fulfilment without an address and a pickup switch while a delivery exists', async () => {
+    await adminDb.doc('customers/c-booking').set(customerPayload())
+    const bookingId = 'booking-fulfilment-guard'
+    await adminDb.doc(`bookings/${bookingId}`).set(bookingPayload(bookingId, {
+      fulfillment: 'delivery',
+      deliveryAddress: '12 Main Road',
+    }))
+    const token = await tokenFor('manager')
+
+    await expectFailure(
+      await post('/.netlify/functions/update-booking-fulfilment', {
+        bookingId,
+        fulfillment: 'delivery',
+        deliveryAddress: '   ',
+      }, { token }),
+      400,
+      'invalid-argument',
+    )
+
+    expect((await post('/.netlify/functions/delivery-operation', {
+      action: 'create',
+      sourceType: 'booking',
+      sourceId: bookingId,
+    }, { token })).status).toBe(200)
+
+    await expectFailure(
+      await post('/.netlify/functions/update-booking-fulfilment', {
+        bookingId,
+        fulfillment: 'pickup',
+      }, { token }),
+      412,
+      'failed-precondition',
+    )
+    expect((await adminDb.doc(`bookings/${bookingId}`).get()).data()?.fulfillment).toBe('delivery')
+  })
+
+  it('denies the fulfilment operation without the permission or the department scope', async () => {
+    await adminDb.doc('customers/c-booking').set(customerPayload())
+    const bookingId = 'booking-fulfilment-scope'
+    await adminDb.doc(`bookings/${bookingId}`).set(bookingPayload(bookingId, {
+      fulfillment: 'delivery',
+      deliveryAddress: '12 Main Road',
+    }))
+
+    await expectFailure(
+      await post('/.netlify/functions/update-booking-fulfilment', {
+        bookingId,
+        fulfillment: 'delivery',
+        deliveryAddress: '45 Park Lane',
+      }, { token: await tokenFor('finance') }),
+      403,
+      'permission-denied',
+    )
+
+    await adminDb.doc(`bookings/${bookingId}`).update({ departmentIds: ['d2'] })
+    await expectFailure(
+      await post('/.netlify/functions/update-booking-fulfilment', {
+        bookingId,
+        fulfillment: 'delivery',
+        deliveryAddress: '45 Park Lane',
+      }, { token: await tokenFor('cake') }),
+      403,
+      'permission-denied',
+    )
+    expect((await adminDb.doc(`bookings/${bookingId}`).get()).data()?.deliveryAddress).toBe('12 Main Road')
   })
 
   it('rejects a booking advance that would overwrite an existing payment id', async () => {

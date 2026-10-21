@@ -7,6 +7,7 @@ import type {
   DeliveryLine,
   DeliveryStatus,
   Order,
+  OrderLine,
   Outlet,
   Payment,
   UserProfile,
@@ -28,7 +29,7 @@ function deliveryIdFor(sourceType: 'order' | 'booking', sourceId: string): strin
   return `del-${sourceType}-${sourceId}`
 }
 
-function eventFor(
+export function deliveryEventFor(
   delivery: Delivery,
   action: DeliveryEvent['action'],
   actorName: string,
@@ -58,8 +59,13 @@ async function customerAddress(customerId: string | undefined): Promise<string> 
   return [address.line1, address.line2, address.city, address.state, address.pin].filter(Boolean).join(', ')
 }
 
-function linesFromOrder(order: Order): DeliveryLine[] {
-  return (order.lines ?? []).map((line) => ({
+/**
+ * Builds the delivery line snapshot from source lines. The delivery keeps its
+ * own copy of the load, so this mapping is also used to bring a delivery back
+ * in step with a revised booking.
+ */
+export function deliveryLinesFromOrderLines(lines: OrderLine[] | undefined): DeliveryLine[] {
+  return (lines ?? []).map((line) => ({
     lineId: line.id,
     productId: line.productId,
     name: line.name,
@@ -71,17 +77,12 @@ function linesFromOrder(order: Order): DeliveryLine[] {
   }))
 }
 
+function linesFromOrder(order: Order): DeliveryLine[] {
+  return deliveryLinesFromOrderLines(order.lines)
+}
+
 function linesFromBooking(booking: Booking): DeliveryLine[] {
-  return (booking.lines ?? []).map((line) => ({
-    lineId: line.id,
-    productId: line.productId,
-    name: line.name,
-    unit: line.unit,
-    expectedQty: line.quantity,
-    deliveredQty: 0,
-    returnedQty: 0,
-    damagedQty: 0,
-  }))
+  return deliveryLinesFromOrderLines(booking.lines)
 }
 
 async function requireDelivery(profile: UserProfile, deliveryId: string): Promise<Delivery> {
@@ -100,6 +101,83 @@ async function requireDelivery(profile: UserProfile, deliveryId: string): Promis
     throw new OperationError('permission-denied', 'This delivery department is not assigned to you.')
   }
   return delivery
+}
+
+/**
+ * A delivery is an operational snapshot of its source. While the delivery has
+ * not left the outlet it must still describe the source it was created from,
+ * otherwise a driver could be dispatched with a superseded load, address or
+ * schedule. The trusted booking edit keeps a dispatchable delivery in step;
+ * this check is the backstop for any other change, including direct client
+ * writes and records that predate that rule.
+ */
+export async function assertDeliveryMatchesSource(delivery: Delivery): Promise<void> {
+  if (delivery.sourceType !== 'booking') return
+  const snapshot = await getAdminDb().collection('bookings').doc(delivery.sourceId).get()
+  if (!snapshot.exists) {
+    throw new OperationError(
+      'failed-precondition',
+      'The booking for this delivery no longer exists. Resolve the delivery before it is dispatched.',
+    )
+  }
+  const booking = snapshot.data() as Booking
+  if (booking.fulfillment !== 'delivery') {
+    throw new OperationError(
+      'failed-precondition',
+      'This booking is no longer a delivery booking. Resolve the delivery before it is dispatched.',
+    )
+  }
+  if (!['confirmed', 'in_production', 'ready'].includes(booking.status)) {
+    throw new OperationError(
+      'failed-precondition',
+      `This booking is ${booking.status}. Resolve the delivery before it is dispatched.`,
+    )
+  }
+  const expectedLines = deliveryLinesFromOrderLines(booking.lines)
+  const linesMatch = expectedLines.length === delivery.lines.length
+    && expectedLines.every((line) => {
+      const current = delivery.lines.find((item) => item.lineId === line.lineId)
+      if (!current) return false
+      return current.productId === line.productId
+        && current.name === line.name
+        && current.unit === line.unit
+        && current.expectedQty === line.expectedQty
+    })
+  if (!linesMatch) {
+    throw new OperationError(
+      'failed-precondition',
+      'The booking load changed after this delivery was created. Save the booking again so the delivery matches before dispatching.',
+    )
+  }
+  if ((booking.deliveryAddress || '') !== (delivery.address || '')) {
+    throw new OperationError(
+      'failed-precondition',
+      'The delivery address no longer matches the booking. Save the booking again so the delivery matches before dispatching.',
+    )
+  }
+  const expectedSchedule = new Date(`${booking.eventDate}T${booking.eventTime || '23:59'}:00`).toISOString()
+  if (expectedSchedule !== delivery.scheduledAt) {
+    throw new OperationError(
+      'failed-precondition',
+      'The event schedule no longer matches the booking. Save the booking again so the delivery matches before dispatching.',
+    )
+  }
+  if (booking.customerName !== delivery.customerName
+    || (booking.customerPhone || '') !== (delivery.customerPhone || '')) {
+    throw new OperationError(
+      'failed-precondition',
+      'The customer on this delivery no longer matches the booking. Save the booking again so the delivery matches before dispatching.',
+    )
+  }
+  const departments = [...(booking.departmentIds ?? [])].sort()
+  const deliveryDepartments = [...(delivery.departmentIds ?? [])].sort()
+  if (departments.length !== deliveryDepartments.length
+    || departments.some((departmentId, index) => departmentId !== deliveryDepartments[index])) {
+    throw new OperationError(
+      'failed-precondition',
+      'The departments on this delivery no longer match the booking. Save the booking again so the delivery matches before dispatching.',
+    )
+  }
 }
 
 export async function deliveryOperationForActor(
@@ -201,7 +279,7 @@ export async function deliveryOperationForActor(
       const outlet = outletSnapshot.data() as Outlet
       delivery.deliveryNumber = makeDeliveryNumber(outlet.code || 'OUT')
       transaction.set(ref, delivery)
-      transaction.set(db.collection('deliveryEvents').doc(), eventFor(delivery, 'created', actorName, now))
+      transaction.set(db.collection('deliveryEvents').doc(), deliveryEventFor(delivery, 'created', actorName, now))
       return { deliveryId: delivery.id, status: delivery.status }
     })
   }
@@ -230,7 +308,7 @@ export async function deliveryOperationForActor(
         updatedAt: now,
         updatedBy: profile.uid,
       })
-      transaction.set(db.collection('deliveryEvents').doc(), eventFor(delivery, 'assigned', actorName, now, staff.displayName || staff.email))
+      transaction.set(db.collection('deliveryEvents').doc(), deliveryEventFor(delivery, 'assigned', actorName, now, staff.displayName || staff.email))
       return { deliveryId: delivery.id, status: live.status === 'pending' ? 'assigned' : live.status }
     })
   }
@@ -241,6 +319,9 @@ export async function deliveryOperationForActor(
     if (['delivered', 'partially_delivered', 'returned', 'failed', 'dispatched'].includes(delivery.status)) {
       throw new OperationError('failed-precondition', 'This delivery cannot be dispatched again.')
     }
+    // Refuse to send a driver with a load, address or schedule that no longer
+    // matches the source it was created from.
+    await assertDeliveryMatchesSource(delivery)
     return db.runTransaction(async (transaction) => {
       const ref = db.collection('deliveries').doc(delivery.id)
       transaction.update(ref, {
@@ -249,7 +330,7 @@ export async function deliveryOperationForActor(
         updatedAt: now,
         updatedBy: profile.uid,
       })
-      transaction.set(db.collection('deliveryEvents').doc(), eventFor(delivery, 'dispatched', actorName, now))
+      transaction.set(db.collection('deliveryEvents').doc(), deliveryEventFor(delivery, 'dispatched', actorName, now))
       return { deliveryId: delivery.id, status: 'dispatched' as const }
     })
   }
@@ -259,6 +340,10 @@ export async function deliveryOperationForActor(
     if (['delivered', 'partially_delivered', 'returned', 'failed'].includes(delivery.status)) {
       throw new OperationError('failed-precondition', 'This delivery is already closed.')
     }
+    // Closing is a record of what physically happened, so it is not blocked
+    // here. A failed or returned delivery must stay recordable even when the
+    // source booking was cancelled. Only dispatch, where a stale load would
+    // physically leave the outlet, is refused.
     const provided = new Map(input.lines.map((line) => [line.lineId, line]))
     for (const line of input.lines) {
       if (!delivery.lines.some((item) => item.lineId === line.lineId)) {
@@ -304,12 +389,12 @@ export async function deliveryOperationForActor(
         notes: input.note?.trim() || delivery.notes || '',
         reconciliationStatus: reconciliationPending ? 'pending' : 'not_required',
         reconciliationNote: reconciliationPending
-          ? 'Stock and source-sale reconciliation is pending a business policy decision. No stock or paid totals were changed.'
+          ? 'Reconciliation is pending. No stock or paid totals were changed automatically under the approved manual-reconciliation policy.'
           : '',
         updatedAt: now,
         updatedBy: profile.uid,
       })
-      transaction.set(db.collection('deliveryEvents').doc(), eventFor(delivery, 'completed', actorName, now, `${input.status}${input.note ? `: ${input.note}` : ''}`))
+      transaction.set(db.collection('deliveryEvents').doc(), deliveryEventFor(delivery, 'completed', actorName, now, `${input.status}${input.note ? `: ${input.note}` : ''}`))
       return { deliveryId: delivery.id, status: input.status }
     })
   }
@@ -397,7 +482,7 @@ export async function deliveryOperationForActor(
       updatedAt: nowIso,
       updatedBy: profile.uid,
     })
-    transaction.set(db.collection('deliveryEvents').doc(), eventFor(live, 'collected', actorName, nowIso, `${input.amountPaise / 100} collected`))
+    transaction.set(db.collection('deliveryEvents').doc(), deliveryEventFor(live, 'collected', actorName, nowIso, `${input.amountPaise / 100} collected`))
     return {
       deliveryId: live.id,
       paymentId: paymentRef.id,

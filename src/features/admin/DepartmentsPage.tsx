@@ -147,6 +147,7 @@ export function DepartmentsPage() {
         eyebrow="Catalogue"
         title="Departments"
         description="Cake, Sweets, Hot Section and Gajak operate as separate departments. Department admins only see their assigned areas."
+        help="department-admin"
         actions={
           <Button
             onClick={() => { setEditing(null); setOpen(true) }}

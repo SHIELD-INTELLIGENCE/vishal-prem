@@ -97,6 +97,7 @@ export function OutletsPage() {
         eyebrow="Administration"
         title="Outlets"
         description="Both physical locations. Orders, product availability, customer accounts and staff access are scoped to outlets."
+        help="outlet-admin"
         actions={<Button onClick={openCreate} leftIcon={<Plus className="h-4 w-4" />}>New outlet</Button>}
       />
 

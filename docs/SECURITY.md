@@ -36,7 +36,7 @@ This document describes what the system enforces, what it does not, and which ac
 | `stockAdjustments` | `inventoryAdjust` + outlet + department, or Super Admin | trusted stock-adjustment endpoint only | never | never |
 | `customers` | `customersView` + outlet | `customersManage` + outlet | same | Super Admin |
 | `orders` | `ordersView`/`ordersManage`/`paymentsView` + outlet + department | trusted create-order endpoint only | `ordersManage` limited to non-cancel status, notes or print counts; cancellation and payment fields are server-only | Super Admin |
-| `bookings` | `bookingsView`/`bookingsManage`/`paymentsView` + outlet + department | trusted create-booking endpoint only | `bookingsManage` + scope, limited to status, preparation/packing, instructions, fulfilment and timestamps; prices, totals, paid fields and source links are server-only | never |
+| `bookings` | `bookingsView`/`bookingsManage`/`paymentsView` + outlet + department | trusted create-booking and update-booking-fulfilment endpoints only | `bookingsManage` + scope, limited to status, cancellation, preparation/packing, instructions and timestamps; prices, totals, paid fields, source links, fulfilment and the delivery address are server-only | never |
 | `bookingRevisions` | `bookingsView`/`bookingsManage` + outlet + department | trusted update-booking endpoint only | never | never |
 | `payments` | `paymentsView` + outlet + department | trusted order/booking payment endpoints only | never | never |
 | `productionTasks`, `productionEvents` | `productionView`/`productionManage` + outlet + department | trusted production endpoint only | never | never |
@@ -55,6 +55,7 @@ The trusted Functions path owns order creation/cancellation/payments, booking cr
 - **Stock tracking and conversion changes are locked after creation.** A metadata edit cannot change `trackStock` or `conversionFactor`; both are preserved from the live product. Enabling tracking later, changing an issue factor, or converting existing balances needs a separate policy and migration because it can reinterpret stock meaning or future order consumption.
 - **Initial stock at product creation is rules-gated but not server-audited.** A user with both `productsManage` and `inventoryAdjust` may create a tracked product only when `openingStock == stockQty` and both are non-negative. The product's `createdBy`, timestamps and opening balance are the audit trail for that initial count. Subsequent manual changes always go through the trusted stock-adjustment endpoint.
 - **Booking prices and totals are server-authoritative.** Booking creation and priced edits re-read products, customer, outlet and tax mode, aggregate stock demand, preserve the paid amount, enforce a revision guard and append a `bookingRevisions` snapshot. A direct client booking create, priced update or payment write is denied.
+- **Booking fulfilment and the delivery address are server-authoritative.** Both decide what is physically loaded, so direct client writes to `fulfillment` and `deliveryAddress` are denied by rules for every role. The trusted fulfilment operation records them and refreshes a delivery that has not been dispatched. A delivery created from an **order** still keeps the customer address that was on the record when it was created; that drift is an open issue, see [OPEN_ISSUES.md](OPEN_ISSUES.md) OI-001.
 - **No adjustment-history screen yet.** `stockAdjustments` records are immutable and scoped reads are allowed, but no UI lists them. The collection is an audit trail, not a full inventory ledger or stock-take system.
 - **Invoice numbering.** Invoice references shown on print documents are derived from the order or booking number. There is no government-compliant sequential invoice register or gap-free audit.
 - **Print counts and non-authoritative timestamps.** `printCounts` and the timestamps on notes/status edits are written by the client. Authoritative creation, cancellation, payment and stock-adjustment timestamps come from the trusted Function server. Print counts remain an operational aid, not proof of physical printing.
@@ -139,7 +140,7 @@ Actions taken or recommended:
 - stock-adjustment authorization, outlet and department scope, missing reasons, zero quantities, negative resulting balances, concurrent adjustments, retry idempotency and atomic audit records;
 - payment-record and order-balance atomicity, including overpayment rejection;
 - direct client order creation, cancellation, paid-field patches, order payment records and stock-adjustment records denied by rules;
-- notes, print counts and non-cancel order status advancement remaining permitted, while direct booking creation, priced booking edits and payment writes are denied;
+- notes, print counts and non-cancel order status advancement remaining permitted, while direct booking creation, priced booking edits, booking fulfilment and delivery-address writes, and payment writes are denied;
 - forged actor fields rejected by strict endpoint validation while writes use the token-derived UID;
 - endpoint method, content-type, body-size and CORS restrictions;
 - safe endpoint errors that do not disclose stacks, paths or credentials.
@@ -167,6 +168,7 @@ The rules suites cover:
 - direct create, update and delete of stock-adjustment records denied; adjustment-history reads scoped to `inventoryAdjust` holders;
 - order `outletId`, `departmentId`, `createdBy`, lines, totals and stock-consumption snapshots are immutable after creation; `createdBy`/`updatedBy` must match the authenticated user on update;
 - direct booking creation, priced booking edits, booking revisions and all payment records are denied to clients; only narrow booking operational fields remain writable;
+- direct booking fulfilment and delivery-address writes are denied to clients for every role, including Super Admin; those fields are changed only by the trusted fulfilment operation, which also keeps a dispatchable delivery in step;
 - production, inventory, delivery, expense and cash-session records are readable only with the matching permission and scope, and every client write is denied;
 - business profile cannot be deleted, outlet edits need `outletsManage`, cross-outlet product creation denied;
 - reads and writes to collections with no rule are denied even for a Super Admin;

@@ -27,6 +27,7 @@ import { cn } from '@/lib/utils'
 import {
   HELP_ARTICLES,
   HELP_CATEGORIES,
+  TRAINING_PATHS,
   helpArticleById,
   searchHelp,
   type HelpArticle,
@@ -45,6 +46,8 @@ const CATEGORY_ICONS: Record<HelpCategory, typeof Rocket> = {
 
 const QUICK_LINKS = [
   { id: 'getting-started', label: 'First-time setup' },
+  { id: 'training', label: 'New staff training' },
+  { id: 'daily-checklist', label: 'Daily checklist' },
   { id: 'orders', label: 'Create an order' },
   { id: 'bookings', label: 'Party bookings' },
   { id: 'staff', label: 'Staff & permissions' },
@@ -114,6 +117,7 @@ export function HelpPage() {
             <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" aria-hidden />
             <input
               id="help-search"
+              data-search-input
               type="search"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
@@ -137,6 +141,55 @@ export function HelpPage() {
               </button>
             ))}
           </div>
+        </div>
+      </section>
+
+      <section aria-labelledby="training-paths-heading">
+        <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+          <div>
+            <h2 id="training-paths-heading" className="font-display text-lg font-semibold text-ink-900">
+              Training paths
+            </h2>
+            <p className="mt-0.5 text-sm text-ink-500">
+              Start with the job the person will do, then work through the short guides in order.
+            </p>
+          </div>
+        </div>
+        <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-3">
+          {TRAINING_PATHS.map((path) => {
+            const articles = path.articleIds
+              .map((id) => helpArticleById(id))
+              .filter((article): article is HelpArticle => Boolean(article))
+            if (articles.length === 0) return null
+            return (
+              <article key={path.title} className="surface-card flex h-full flex-col p-4">
+                <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-brand-700">{path.audience}</p>
+                <h3 className="mt-1 font-display text-base font-semibold text-ink-900">{path.title}</h3>
+                <p className="mt-1 text-xs leading-relaxed text-ink-500">{path.description}</p>
+                <div className="mt-3 flex flex-1 flex-wrap content-start gap-1.5">
+                  {articles.map((article) => (
+                    <button
+                      key={article.id}
+                      type="button"
+                      onClick={() => openArticle(article.id)}
+                      className="rounded-full border border-ink-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-ink-700 transition hover:border-brand-300 hover:text-brand-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
+                    >
+                      {article.title}
+                    </button>
+                  ))}
+                </div>
+                <Button
+                  className="mt-3 self-start"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => openArticle(articles[0].id)}
+                  rightIcon={<ChevronRight className="h-3.5 w-3.5" />}
+                >
+                  Start with {articles[0].title}
+                </Button>
+              </article>
+            )
+          })}
         </div>
       </section>
 
@@ -341,6 +394,20 @@ function ArticleView({
             </ul>
           </section>
 
+          {article.prerequisites && article.prerequisites.length > 0 && (
+            <section>
+              <h2 className="font-display text-base font-semibold text-ink-900">Before you start</h2>
+              <ul className="mt-2 space-y-1.5">
+                {article.prerequisites.map((item) => (
+                  <li key={item} className="flex gap-2 text-sm leading-relaxed text-ink-700">
+                    <Info className="mt-0.5 h-4 w-4 shrink-0 text-brand-600" aria-hidden />
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
           <section>
             <h2 className="font-display text-base font-semibold text-ink-900">Step by step</h2>
             <ol className="mt-2 space-y-2">
@@ -385,6 +452,19 @@ function ArticleView({
                 <CheckCircle2 className="h-4 w-4 text-sage-700" aria-hidden /> After you save
               </h2>
               <p className="mt-1.5 text-sm leading-relaxed text-ink-700">{article.after}</p>
+            </section>
+          )}
+
+          {article.pending && article.pending.length > 0 && (
+            <section className="rounded-xl border border-gold-200 bg-gold-50/60 p-4">
+              <h2 className="flex items-center gap-2 font-display text-base font-semibold text-ink-900">
+                <AlertTriangle className="h-4 w-4 text-gold-700" aria-hidden /> Still unresolved
+              </h2>
+              <ul className="mt-2 space-y-1.5">
+                {article.pending.map((item) => (
+                  <li key={item} className="text-sm leading-relaxed text-ink-700">{item}</li>
+                ))}
+              </ul>
             </section>
           )}
 

@@ -12,6 +12,7 @@ export type TrustedOperation =
   | 'financeOperation'
   | 'staffDirectory'
   | 'updateBooking'
+  | 'updateBookingFulfilment'
   | 'createBooking'
 
 const ENDPOINTS: Record<TrustedOperation, string> = {
@@ -26,6 +27,7 @@ const ENDPOINTS: Record<TrustedOperation, string> = {
   financeOperation: 'finance-operation',
   staffDirectory: 'staff-directory',
   updateBooking: 'update-booking',
+  updateBookingFulfilment: 'update-booking-fulfilment',
   createBooking: 'create-booking',
 }
 

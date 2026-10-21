@@ -89,6 +89,7 @@ export function ProductDetailPage() {
         eyebrow={`${department?.name ?? 'Catalogue'} · ${product.category}`}
         title={product.name}
         description={`${product.group}${product.alias ? ` · ${product.alias}` : ''} · Updated ${formatDateTime(product.updatedAt)}`}
+        help="products"
         actions={
           <>
             {canAdjustStock && product.trackStock && (

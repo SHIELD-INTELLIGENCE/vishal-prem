@@ -599,18 +599,25 @@ export async function updateBookingFulfilment({
   bookingId,
   fulfillment,
   deliveryAddress,
-  profile,
 }: {
   bookingId: string
   fulfillment: Booking['fulfillment']
   deliveryAddress?: string
-  profile: UserProfile
-}): Promise<void> {
-  if (!db) throw new Error('Firestore is not available.')
-  await updateDoc(doc(db, 'bookings', bookingId), {
-    fulfillment,
-    deliveryAddress: deliveryAddress?.trim() ?? '',
-    updatedAt: nowIso(),
-    updatedBy: profile.uid,
-  })
+}): Promise<{
+  bookingId: string
+  fulfillment: Booking['fulfillment']
+  deliveryAddress: string
+}> {
+  return callTrustedOperation<
+    {
+      bookingId: string
+      fulfillment: Booking['fulfillment']
+      deliveryAddress?: string
+    },
+    {
+      bookingId: string
+      fulfillment: Booking['fulfillment']
+      deliveryAddress: string
+    }
+  >('updateBookingFulfilment', { bookingId, fulfillment, deliveryAddress })
 }

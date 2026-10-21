@@ -339,7 +339,7 @@ export interface DeliveryEvent extends BaseDoc {
   deliveryId: ID
   outletId: ID
   departmentIds: ID[]
-  action: 'created' | 'assigned' | 'dispatched' | 'completed' | 'collected'
+  action: 'created' | 'assigned' | 'dispatched' | 'completed' | 'collected' | 'source_updated'
   note?: string
   actorName: string
 }
