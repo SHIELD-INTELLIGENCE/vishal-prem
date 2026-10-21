@@ -4,7 +4,7 @@
 
 [build.environment]
   NODE_VERSION = "22"
-
+  SECRETS_SCAN_OMIT_KEYS = "VITE_EMULATOR_HOST,VITE_AUTH_EMULATOR_PORT,VITE_FIRESTORE_EMULATOR_PORT,VITE_STORAGE_EMULATOR_PORT,VITE_FIREBASE_PROJECT_ID,VITE_FIREBASE_AUTH_DOMAIN,VITE_FIREBASE_STORAGE_BUCKET"
 # Trusted order, payment and stock operations. These functions use the Firebase
 # Admin SDK and are bundled at deploy time; they must never be placed under the
 # publish directory.
