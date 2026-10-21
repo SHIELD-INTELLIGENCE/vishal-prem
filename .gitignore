@@ -1,0 +1,43 @@
+# Dependencies / build output
+node_modules/
+dist/
+dist-ssr/
+functions/lib/
+*.local
+
+# Environment files — never commit real Firebase or service account values
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+!.env.example
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.swp
+
+# Logs
+*.log
+npm-debug.log*
+
+# Firebase
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+*-debug.log
+service-account*.json
+*-firebase-adminsdk-*.json
+secrets/
+
+# Test / coverage
+coverage/
+
+# Capacitor / Android build artefacts
+android/app/build/
+android/.gradle/
+android/local.properties

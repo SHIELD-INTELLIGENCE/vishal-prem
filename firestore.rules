@@ -1,0 +1,479 @@
+rules_version = '2';
+
+// Vishal Prem Bakery & Sweets — deny-by-default authorization.
+// Role, outlet and department scope is read from the user's own Firestore
+// profile, never from client-supplied arguments. Staff profile writes are
+// restricted to Super Admins; invite acceptance is the only self-service path.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function profilePath() {
+      return /databases/$(database)/documents/users/$(request.auth.uid);
+    }
+
+    function hasProfile() {
+      return signedIn() && exists(profilePath());
+    }
+
+    function isActive() {
+      return hasProfile() && get(profilePath()).data.active == true;
+    }
+
+    function isSuper() {
+      return isActive() && get(profilePath()).data.role == 'super_admin';
+    }
+
+    function hasPerm(permission) {
+      return isActive() && (
+        get(profilePath()).data.role == 'super_admin'
+        || get(profilePath()).data.permissions[permission] == true
+      );
+    }
+
+    function outletAllowed(outletId) {
+      return isSuper() || (isActive() && outletId in get(profilePath()).data.outletIds);
+    }
+
+    function anyOutletAllowed(outletIds) {
+      return isSuper() || (isActive() && outletIds.hasAny(get(profilePath()).data.outletIds));
+    }
+
+    function outletWide() {
+      return isActive() && get(profilePath()).data.role in ['manager', 'accountant'];
+    }
+
+    function deptAllowed(departmentId) {
+      return isSuper() || outletWide() || (isActive() && departmentId in get(profilePath()).data.departmentIds);
+    }
+
+    function anyDeptAllowed(departmentIds) {
+      return isSuper() || outletWide() || (isActive() && departmentIds.hasAny(get(profilePath()).data.departmentIds));
+    }
+
+    function allDeptsAllowed(departmentIds) {
+      return isSuper() || outletWide() || (isActive() && departmentIds.hasOnly(get(profilePath()).data.departmentIds));
+    }
+
+    function allOutletsAllowed(outletIds) {
+      return isSuper() || (isActive() && outletIds.hasOnly(get(profilePath()).data.outletIds));
+    }
+
+    function invitedProfile(token) {
+      return get(/databases/$(database)/documents/invites/$(token)).data;
+    }
+
+    function validOrderStatusTransition(from, to) {
+      return (from == 'draft' && to == 'confirmed')
+        || (from == 'confirmed' && to == 'preparing')
+        || (from == 'preparing' && to == 'ready')
+        || (from == 'ready' && to == 'completed');
+    }
+
+    function validBookingStatusTransition(from, to) {
+      return (from == 'enquiry' && to in ['confirmed', 'cancelled'])
+        || (from == 'confirmed' && to in ['in_production', 'cancelled'])
+        || (from == 'in_production' && to in ['ready', 'cancelled'])
+        || (from == 'ready' && to in ['completed', 'cancelled']);
+    }
+
+    // ---------------------------------------------------------------------
+    // Business profile and configuration
+    // ---------------------------------------------------------------------
+    match /business/{documentId} {
+      allow read: if isActive();
+      allow create, update: if hasPerm('settingsManage');
+      allow delete: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Outlets and departments
+    // ---------------------------------------------------------------------
+    match /outlets/{outletId} {
+      allow read: if isActive();
+      allow create, update: if hasPerm('outletsManage');
+      allow delete: if isSuper();
+    }
+
+    match /departments/{departmentId} {
+      allow read: if isActive();
+      allow create, update: if hasPerm('departmentsManage');
+      allow delete: if isSuper();
+    }
+
+    // ---------------------------------------------------------------------
+    // Product master
+    // ---------------------------------------------------------------------
+    match /products/{productId} {
+      allow get, list: if isActive() && (
+        isSuper()
+        || (hasPerm('productsView')
+          && anyOutletAllowed(resource.data.outletIds)
+          && deptAllowed(resource.data.departmentId))
+      );
+
+      // Initial stock is only accepted from staff who may also adjust stock.
+      // Product managers without that permission can create untracked items,
+      // but cannot invent a balance or enable tracking during creation.
+      allow create: if hasPerm('productsManage')
+        && request.resource.data.id == productId
+        && allOutletsAllowed(request.resource.data.outletIds)
+        && request.resource.data.outletIds.size() > 0
+        && deptAllowed(request.resource.data.departmentId)
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.trackStock is bool
+        && (
+          (
+            request.resource.data.trackStock == true
+            && hasPerm('inventoryAdjust')
+            && request.resource.data.keys().hasAny(['stockQty', 'openingStock'])
+            && request.resource.data.stockQty is number
+            && request.resource.data.openingStock is number
+            && request.resource.data.stockQty == request.resource.data.openingStock
+            && request.resource.data.stockQty >= 0
+            && request.resource.data.stockQty <= 1000000
+          )
+          || (
+            request.resource.data.trackStock == false
+            && !request.resource.data.keys().hasAny(['stockQty', 'openingStock'])
+          )
+        );
+
+      // Metadata edits cannot change the authoritative balance, opening
+      // balance, tracking mode or conversion factor. Stock changes go through
+      // the adjustProductStock callable. Availability and critical-level edits
+      // remain direct.
+      allow update: if hasPerm('productsManage')
+        && allOutletsAllowed(request.resource.data.outletIds)
+        && request.resource.data.outletIds.size() > 0
+        && deptAllowed(request.resource.data.departmentId)
+        && request.resource.data.updatedBy == request.auth.uid
+        && !request.resource.data.diff(resource.data).affectedKeys()
+             .hasAny(['stockQty', 'openingStock', 'trackStock', 'conversionFactor']);
+
+      allow delete: if isSuper();
+    }
+
+    // Immutable audit history for manual stock changes. Only the
+    // adjustProductStock callable (Admin SDK) may create, edit or delete these
+    // records. Scoped staff may read them for future inventory review.
+    match /stockAdjustments/{adjustmentId} {
+      allow get, list: if isActive() && (
+        isSuper()
+        || (hasPerm('inventoryAdjust')
+          && anyOutletAllowed(resource.data.outletIds)
+          && deptAllowed(resource.data.departmentId))
+      );
+
+      allow create, update, delete: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Customer / party master
+    // ---------------------------------------------------------------------
+    match /customers/{customerId} {
+      allow get, list: if hasPerm('customersView')
+        && anyOutletAllowed(resource.data.outletIds);
+
+      allow create: if hasPerm('customersManage')
+        && request.resource.data.id == customerId
+        && allOutletsAllowed(request.resource.data.outletIds)
+        && request.resource.data.outletIds.size() > 0
+        && request.resource.data.createdBy == request.auth.uid;
+
+      allow update: if hasPerm('customersManage')
+        && anyOutletAllowed(resource.data.outletIds)
+        && allOutletsAllowed(request.resource.data.outletIds)
+        && request.resource.data.outletIds.size() > 0;
+
+      allow delete: if isSuper();
+    }
+
+    // ---------------------------------------------------------------------
+    // Counter / manual orders
+    // ---------------------------------------------------------------------
+    match /orders/{orderId} {
+      allow get, list: if isActive()
+        && outletAllowed(resource.data.outletId)
+        && (isSuper() || deptAllowed(resource.data.departmentId))
+        && (
+          hasPerm('ordersView')
+          || hasPerm('ordersManage')
+          || hasPerm('paymentsView')
+        );
+
+      // Trusted creation only. The createOrder callable uses the Admin SDK,
+      // which bypasses these rules, and derives lines, totals and stock from
+      // live product documents.
+      allow create: if false;
+
+      // After creation, staff may advance status, edit notes or record print
+      // counts. Order lines, totals, discounts, tax, stock snapshots, payment
+      // fields and cancellation are deliberately not in any client write
+      // branch. Cancellation is handled by the cancelOrder callable.
+      allow update: if (
+        hasPerm('ordersManage')
+        && outletAllowed(resource.data.outletId)
+        && deptAllowed(resource.data.departmentId)
+        && request.resource.data.outletId == resource.data.outletId
+        && request.resource.data.departmentId == resource.data.departmentId
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.updatedBy == request.auth.uid
+        && (
+          (
+            request.resource.data.status == resource.data.status
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['notes', 'updatedAt', 'updatedBy'])
+          )
+          || (
+            request.resource.data.status == resource.data.status
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['printCounts', 'updatedAt', 'updatedBy'])
+          )
+          || (
+            request.resource.data.status != 'cancelled'
+            && validOrderStatusTransition(resource.data.status, request.resource.data.status)
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['status', 'updatedAt', 'updatedBy'])
+          )
+        )
+      );
+
+      allow delete: if isSuper();
+    }
+
+    // ---------------------------------------------------------------------
+    // Party / bulk bookings
+    // ---------------------------------------------------------------------
+    match /bookings/{bookingId} {
+      allow get, list: if isActive()
+        && outletAllowed(resource.data.outletId)
+        && (isSuper() || anyDeptAllowed(resource.data.departmentIds))
+        && (hasPerm('bookingsView') || hasPerm('bookingsManage') || hasPerm('paymentsView'));
+
+      // Booking creation and priced edits are trusted operations. Direct
+      // clients may only move operational fields that cannot rewrite prices,
+      // totals, paid money, source links or revision history.
+      allow create: if false;
+
+      allow update: if (
+        hasPerm('bookingsManage')
+        && outletAllowed(resource.data.outletId)
+        && (isSuper() || anyDeptAllowed(resource.data.departmentIds))
+        && request.resource.data.outletId == resource.data.outletId
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.paidPaise == resource.data.paidPaise
+        && request.resource.data.totalPaise == resource.data.totalPaise
+        && request.resource.data.balancePaise == resource.data.balancePaise
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+             'status', 'cancelledAt', 'cancellationReason',
+             'preparationStatus', 'packingStatus', 'instructions',
+             'fulfillment', 'deliveryAddress', 'updatedAt', 'updatedBy'
+           ])
+        && request.resource.data.status in [
+             'enquiry', 'confirmed', 'in_production', 'ready', 'completed', 'cancelled'
+           ]
+        && request.resource.data.preparationStatus in ['pending', 'in_progress', 'done']
+        && request.resource.data.packingStatus in ['pending', 'packed', 'handed_over']
+        && request.resource.data.fulfillment in ['pickup', 'delivery']
+        && (
+             request.resource.data.status == resource.data.status
+             || validBookingStatusTransition(resource.data.status, request.resource.data.status)
+           )
+        && (
+             (
+               request.resource.data.status == 'cancelled'
+               && request.resource.data.status != resource.data.status
+               && request.resource.data.cancelledAt is string
+               && request.resource.data.cancellationReason is string
+               && request.resource.data.cancellationReason.size() > 0
+             )
+             || (
+               request.resource.data.status != 'cancelled'
+               && !request.resource.data.diff(resource.data).affectedKeys()
+                    .hasAny(['cancelledAt', 'cancellationReason'])
+             )
+           )
+      );
+
+      allow delete: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Booking revision history (append-only)
+    // ---------------------------------------------------------------------
+    match /bookingRevisions/{revisionId} {
+      allow get, list: if isActive()
+        && (hasPerm('bookingsView') || hasPerm('bookingsManage'))
+        && outletAllowed(resource.data.outletId)
+        && (isSuper() || anyDeptAllowed(resource.data.departmentIds));
+      allow create, update, delete: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Payments / refunds
+    // ---------------------------------------------------------------------
+    match /payments/{paymentId} {
+      allow get, list: if hasPerm('paymentsView')
+        && outletAllowed(resource.data.outletId)
+        && (isSuper() || anyDeptAllowed(resource.data.departmentIds));
+
+      // All receipts, refunds and balance changes are written by trusted
+      // endpoints with the Admin SDK. Client writes are denied even for super
+      // admins so posted history cannot be bypassed or rewritten.
+      allow create, update, delete: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Production, inventory, delivery and finance history
+    // ---------------------------------------------------------------------
+    // Every write below is performed by a trusted Netlify operation using the
+    // Admin SDK. Client writes are denied even for staff who can read the
+    // records, which keeps append-only history and balances server-authoritative.
+    match /productionTasks/{taskId} {
+      allow get, list: if isActive()
+        && (hasPerm('productionView') || hasPerm('productionManage'))
+        && outletAllowed(resource.data.outletId)
+        && deptAllowed(resource.data.departmentId);
+      allow create, update, delete: if false;
+    }
+
+    match /productionEvents/{eventId} {
+      allow get, list: if isActive()
+        && (hasPerm('productionView') || hasPerm('productionManage'))
+        && outletAllowed(resource.data.outletId)
+        && deptAllowed(resource.data.departmentId);
+      allow create, update, delete: if false;
+    }
+
+    match /inventoryItems/{itemId} {
+      allow get, list: if isActive()
+        && (hasPerm('inventoryView') || hasPerm('inventoryManage') || hasPerm('inventoryAdjust'))
+        && outletAllowed(resource.data.outletId)
+        && deptAllowed(resource.data.departmentId);
+      allow create, update, delete: if false;
+    }
+
+    match /inventoryMovements/{movementId} {
+      allow get, list: if isActive()
+        && (hasPerm('inventoryView') || hasPerm('inventoryManage') || hasPerm('inventoryAdjust'))
+        && outletAllowed(resource.data.outletId)
+        && deptAllowed(resource.data.departmentId);
+      allow create, update, delete: if false;
+    }
+
+    match /inventoryCounts/{countId} {
+      allow get, list: if isActive()
+        && (hasPerm('inventoryView') || hasPerm('inventoryManage') || hasPerm('inventoryAdjust'))
+        && outletAllowed(resource.data.outletId)
+        && deptAllowed(resource.data.departmentId);
+      allow create, update, delete: if false;
+    }
+
+    match /deliveries/{deliveryId} {
+      allow get, list: if isActive()
+        && (hasPerm('deliveryView') || hasPerm('deliveryManage'))
+        && outletAllowed(resource.data.outletId)
+        && (isSuper() || anyDeptAllowed(resource.data.departmentIds));
+      allow create, update, delete: if false;
+    }
+
+    match /deliveryEvents/{eventId} {
+      allow get, list: if isActive()
+        && (hasPerm('deliveryView') || hasPerm('deliveryManage'))
+        && outletAllowed(resource.data.outletId)
+        && (isSuper() || anyDeptAllowed(resource.data.departmentIds));
+      allow create, update, delete: if false;
+    }
+
+    match /expenses/{expenseId} {
+      allow get, list: if isActive()
+        && (hasPerm('financeView') || hasPerm('financeManage'))
+        && outletAllowed(resource.data.outletId);
+      allow create, update, delete: if false;
+    }
+
+    match /cashSessions/{sessionId} {
+      allow get, list: if isActive()
+        && (hasPerm('financeView') || hasPerm('financeManage'))
+        && outletAllowed(resource.data.outletId);
+      allow create, update, delete: if false;
+    }
+
+    // Server-only lock documents enforce one open cash session per opener and
+    // outlet. They are written by the Admin SDK and never exposed to clients.
+    match /cashSessionLocks/{lockId} {
+      allow read, write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Staff profiles and invitations
+    // ---------------------------------------------------------------------
+    match /users/{uid} {
+      allow get: if signedIn() && uid == request.auth.uid;
+      allow list: if hasPerm('usersManage');
+
+      allow create: if isSuper()
+        || (
+          signedIn()
+          && uid == request.auth.uid
+          && !exists(/databases/$(database)/documents/users/$(uid))
+          && request.resource.data.uid == uid
+          && request.resource.data.email == request.auth.token.email.lower()
+          && request.resource.data.active == true
+          && request.resource.data.role == invitedProfile(request.resource.data.inviteToken).role
+          && request.resource.data.email == invitedProfile(request.resource.data.inviteToken).email
+          && request.resource.data.permissions == invitedProfile(request.resource.data.inviteToken).permissions
+          && request.resource.data.outletIds == invitedProfile(request.resource.data.inviteToken).outletIds
+          && request.resource.data.departmentIds == invitedProfile(request.resource.data.inviteToken).departmentIds
+          && invitedProfile(request.resource.data.inviteToken).status == 'pending'
+          && invitedProfile(request.resource.data.inviteToken).expiresAtMillis > request.time.toMillis()
+        );
+
+      allow update: if isSuper()
+        || (
+          isActive()
+          && uid == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['displayName', 'phone', 'lastLoginAt', 'updatedAt'])
+        );
+
+      allow delete: if isSuper();
+    }
+
+    match /invites/{token} {
+      // A pending, unexpired token is readable by its exact link so the invited
+      // person can accept it. Only a Super Admin may list or inspect invitation
+      // documents for management.
+      allow get: if isSuper() || (
+        resource.data.status == 'pending'
+        && resource.data.expiresAtMillis > request.time.toMillis()
+      );
+
+      allow list: if isSuper();
+
+      allow create, delete: if isSuper();
+
+      allow update: if isSuper() || (
+        signedIn()
+        && resource.data.status == 'pending'
+        && resource.data.expiresAtMillis > request.time.toMillis()
+        && request.auth.token.email.lower() == resource.data.email
+        && request.resource.data.status == 'accepted'
+        && request.resource.data.acceptedUid == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['status', 'acceptedUid', 'acceptedAt'])
+      );
+    }
+
+    // Deny everything not matched above.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
