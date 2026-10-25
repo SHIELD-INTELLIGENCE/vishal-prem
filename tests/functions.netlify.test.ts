@@ -30,6 +30,8 @@ import deliveryOperationHandler from '../netlify/functions/delivery-operation.mt
 import financeOperationHandler from '../netlify/functions/finance-operation.mts'
 import staffDirectoryHandler from '../netlify/functions/staff-directory.mts'
 import createBookingHandler from '../netlify/functions/create-booking.mts'
+import labelOperationHandler from '../netlify/functions/label-operation.mts'
+import purchaseOperationHandler from '../netlify/functions/purchase-operation.mts'
 import updateBookingHandler from '../netlify/functions/update-booking.mts'
 import updateBookingFulfilmentHandler from '../netlify/functions/update-booking-fulfilment.mts'
 
@@ -60,6 +62,8 @@ const ROUTES: Record<string, Handler> = {
   '/.netlify/functions/finance-operation': financeOperationHandler,
   '/.netlify/functions/staff-directory': staffDirectoryHandler,
   '/.netlify/functions/create-booking': createBookingHandler,
+  '/.netlify/functions/label-operation': labelOperationHandler,
+  '/.netlify/functions/purchase-operation': purchaseOperationHandler,
   '/.netlify/functions/update-booking': updateBookingHandler,
   '/.netlify/functions/update-booking-fulfilment': updateBookingFulfilmentHandler,
 }
@@ -329,6 +333,21 @@ async function seedBase(): Promise<void> {
     outletIds: ['o1', 'o2'],
     departmentIds: [],
   }))
+  // Mirrors profiles created before the canonical `permissions` map existed.
+  batch.set(adminDb.doc('users/legacy-super'), {
+    uid: 'legacy-super',
+    displayName: 'Legacy Super',
+    email: 'legacy-super@example.com',
+    role: 'super_admin',
+    outletIds: [''],
+    departmentIds: [''],
+    active: true,
+    createdAt: NOW,
+    updatedAt: NOW,
+    dashboardView: true,
+    bookingsView: true,
+    usersManage: true,
+  })
   batch.set(adminDb.doc('users/manager'), userProfile('manager', 'manager', {
     departmentIds: [],
   }))
@@ -377,6 +396,7 @@ async function seedBase(): Promise<void> {
     ['prod-last', { stockQty: 1, openingStock: 1 }],
     ['prod-meta', {}],
     ['prod-legacy', {}],
+    ['prod-batch', { batchTracking: true, expiryTracking: true }],
   ] as const) {
     batch.set(adminDb.doc(`products/${id}`), productPayload(id, overrides))
   }
@@ -470,6 +490,7 @@ beforeAll(async () => {
 
   for (const uid of [
     'super',
+    'legacy-super',
     'manager',
     'cake',
     'finance',
@@ -968,6 +989,34 @@ describe('Netlify stock adjustment operation', () => {
     )
     expect((await adminDb.doc('products/prod-cake').get()).data()?.stockQty).toBe(10)
     expect((await adminDb.collection('stockAdjustments').get()).empty).toBe(true)
+  })
+
+  it('allows a positive balance to be reduced to exactly zero', async () => {
+    const requestId = randomUUID()
+    const response = await post(
+      '/.netlify/functions/adjust-product-stock',
+      {
+        requestId,
+        productId: 'prod-cake',
+        delta: -10,
+        reason: 'Physical count cleared the shelf',
+      },
+      { token: await tokenFor('storekeeper') },
+    )
+    expect(response.status).toBe(200)
+    expect(await json(response)).toMatchObject({
+      adjustmentId: requestId,
+      productId: 'prod-cake',
+      previousStockQty: 10,
+      resultingStockQty: 0,
+      unit: 'piece',
+    })
+    expect((await adminDb.doc('products/prod-cake').get()).data()?.stockQty).toBe(0)
+    expect((await adminDb.doc(`stockAdjustments/${requestId}`).get()).data()).toMatchObject({
+      delta: -10,
+      previousStockQty: 10,
+      resultingStockQty: 0,
+    })
   })
 
   it('writes the live balance and immutable audit record together', async () => {
@@ -2218,6 +2267,416 @@ describe('Trusted booking creation and edits', () => {
     expect(managerEdit.status).toBe(200)
     expect((await json(managerEdit)).revision).toBe(2)
     expect((await adminDb.doc('bookingRevisions/booking-mixed-r2').get()).exists).toBe(true)
+  })
+})
+
+describe('Netlify label and purchase operations', () => {
+  const itemTemplate = {
+    name: 'Item label',
+    type: 'item' as const,
+    widthMm: 38,
+    heightMm: 25,
+    marginMm: 1,
+    columns: 3,
+    showName: true,
+    showSku: true,
+    showPrice: true,
+    showMrp: false,
+    showAddress: false,
+    showPhone: false,
+    barcodeFormat: 'code128' as const,
+  }
+
+  it('rejects unauthenticated label requests before validation or writes', async () => {
+    await expectFailure(
+      await post('/.netlify/functions/label-operation', { action: 'create' }),
+      401,
+      'unauthenticated',
+    )
+    expect((await adminDb.collection('labelPrintJobs').get()).empty).toBe(true)
+    expect((await adminDb.collection('labelEvents').get()).empty).toBe(true)
+  })
+
+  it('reaches strict validation for an authenticated label request', async () => {
+    const token = await tokenFor('cake')
+    await expectFailure(
+      await post('/.netlify/functions/label-operation', { action: 'create' }, { token }),
+      400,
+      'invalid-argument',
+    )
+    await expectFailure(
+      await post('/.netlify/functions/label-operation', { action: 'not-a-real-action' }, { token }),
+      400,
+      'invalid-argument',
+    )
+    expect((await adminDb.collection('labelPrintJobs').get()).empty).toBe(true)
+  })
+
+  it('accepts a legacy Super Admin profile without a permissions map', async () => {
+    const token = await tokenFor('legacy-super')
+    await expectFailure(
+      await post('/.netlify/functions/label-operation', { action: 'not-a-real-action' }, { token }),
+      400,
+      'invalid-argument',
+    )
+    expect((await adminDb.collection('labelPrintJobs').get()).empty).toBe(true)
+  })
+
+  it('tracks a label job from request through physical usage to reconciliation', async () => {
+    const token = await tokenFor('cake')
+    const jobId = randomUUID()
+
+    const created = await post('/.netlify/functions/label-operation', {
+      action: 'create',
+      requestId: jobId,
+      jobType: 'item',
+      outletId: 'o1',
+      departmentId: 'd1',
+      template: itemTemplate,
+      lines: [{ refId: 'prod-cake', requestedQty: 5 }],
+    }, { token })
+    expect(created.status).toBe(200)
+    expect((await json(created)).jobId).toBe(jobId)
+
+    const jobAfterCreate = (await adminDb.doc(`labelPrintJobs/${jobId}`).get()).data()
+    expect(jobAfterCreate?.status).toBe('requested')
+    expect(jobAfterCreate?.lines?.[0]?.barcodeValue).toBe('prod-cake')
+
+    const confirmed = await post('/.netlify/functions/label-operation', {
+      action: 'confirm',
+      jobId,
+      lines: [{ lineId: 'line-1', quantity: 4 }],
+    }, { token })
+    expect(confirmed.status).toBe(200)
+    expect(await json(confirmed)).toMatchObject({
+      printedQty: 4,
+      appliedQty: 0,
+      damagedQty: 0,
+      returnedQty: 0,
+      unaccountedQty: 4,
+      status: 'printed',
+      reconciliationStatus: 'open',
+    })
+
+    // Confirmation cannot be repeated; a reprint is a separate event.
+    await expectFailure(
+      await post('/.netlify/functions/label-operation', {
+        action: 'confirm',
+        jobId,
+        lines: [{ lineId: 'line-1', quantity: 1 }],
+      }, { token }),
+      412,
+      'failed-precondition',
+    )
+
+    const applied = await post('/.netlify/functions/label-operation', {
+      action: 'usage',
+      requestId: randomUUID(),
+      jobId,
+      lineId: 'line-1',
+      usageAction: 'apply',
+      quantity: 3,
+    }, { token })
+    expect(applied.status).toBe(200)
+    expect((await json(applied)).appliedQty).toBe(3)
+
+    const damaged = await post('/.netlify/functions/label-operation', {
+      action: 'usage',
+      requestId: randomUUID(),
+      jobId,
+      lineId: 'line-1',
+      usageAction: 'damage',
+      quantity: 1,
+    }, { token })
+    expect(damaged.status).toBe(200)
+    expect((await json(damaged)).unaccountedQty).toBe(0)
+
+    const closed = await post('/.netlify/functions/label-operation', {
+      action: 'close',
+      jobId,
+    }, { token: await tokenFor('manager') })
+    expect(closed.status).toBe(200)
+    expect(await json(closed)).toMatchObject({
+      status: 'closed',
+      reconciliationStatus: 'reconciled',
+      unaccountedQty: 0,
+    })
+
+    const events = await adminDb.collection('labelEvents').where('jobId', '==', jobId).get()
+    expect(events.docs.map((event) => event.data().kind).sort()).toEqual(
+      ['closed', 'confirmed', 'created', 'usage', 'usage'],
+    )
+  })
+
+  it('refuses account labels on a department and reprints as a new event', async () => {
+    const token = await tokenFor('cake')
+    await expectFailure(
+      await post('/.netlify/functions/label-operation', {
+        action: 'create',
+        requestId: randomUUID(),
+        jobType: 'account',
+        outletId: 'o1',
+        departmentId: 'd1',
+        template: { ...itemTemplate, type: 'account', showAddress: true, showPhone: true },
+        lines: [{ refId: 'c-booking', requestedQty: 1 }],
+      }, { token }),
+      400,
+      'invalid-argument',
+    )
+
+    const jobId = randomUUID()
+    await post('/.netlify/functions/label-operation', {
+      action: 'create',
+      requestId: jobId,
+      jobType: 'item',
+      outletId: 'o1',
+      departmentId: 'd1',
+      template: itemTemplate,
+      lines: [{ refId: 'prod-cake', requestedQty: 2 }],
+    }, { token })
+    await post('/.netlify/functions/label-operation', {
+      action: 'confirm',
+      jobId,
+      lines: [{ lineId: 'line-1', quantity: 2 }],
+    }, { token })
+
+    const reprinted = await post('/.netlify/functions/label-operation', {
+      action: 'reprint',
+      jobId,
+      lines: [{ lineId: 'line-1', quantity: 1 }],
+      reason: 'Label was damaged by the printer',
+    }, { token })
+    expect(reprinted.status).toBe(200)
+    expect((await json(reprinted)).printedQty).toBe(3)
+
+    const events = await adminDb.collection('labelEvents').where('jobId', '==', jobId).get()
+    const reprints = events.docs.filter((event) => event.data().kind === 'reprinted')
+    expect(reprints).toHaveLength(1)
+    expect(reprints[0].data().reason).toBe('Label was damaged by the printer')
+  })
+
+  it('stores batch and date details on the job and refuses missing required values', async () => {
+    const token = await tokenFor('cake')
+    const detailedTemplate = {
+      ...itemTemplate,
+      showUnit: true,
+      showBatch: true,
+      showMfgDate: true,
+      showExpiryDate: true,
+    }
+
+    const missing = await post('/.netlify/functions/label-operation', {
+      action: 'create',
+      requestId: randomUUID(),
+      jobType: 'item',
+      outletId: 'o1',
+      departmentId: 'd1',
+      template: detailedTemplate,
+      lines: [{ refId: 'prod-batch', requestedQty: 1 }],
+    }, { token })
+    await expectFailure(missing, 400, 'invalid-argument')
+
+    const reversedDates = await post('/.netlify/functions/label-operation', {
+      action: 'create',
+      requestId: randomUUID(),
+      jobType: 'item',
+      outletId: 'o1',
+      departmentId: 'd1',
+      template: detailedTemplate,
+      lines: [{
+        refId: 'prod-batch',
+        requestedQty: 1,
+        batchNumber: 'BATCH-1',
+        manufacturedAt: '2026-10-20',
+        expiryAt: '2026-10-19',
+      }],
+    }, { token })
+    await expectFailure(reversedDates, 400, 'invalid-argument')
+
+    const jobId = randomUUID()
+    const created = await post('/.netlify/functions/label-operation', {
+      action: 'create',
+      requestId: jobId,
+      jobType: 'item',
+      outletId: 'o1',
+      departmentId: 'd1',
+      template: detailedTemplate,
+      lines: [{
+        refId: 'prod-batch',
+        requestedQty: 2,
+        batchNumber: 'BATCH-1',
+        manufacturedAt: '2026-10-20',
+        expiryAt: '2026-11-20',
+        netQuantity: '500 g',
+      }],
+    }, { token })
+    expect(created.status).toBe(200)
+
+    const job = (await adminDb.doc(`labelPrintJobs/${jobId}`).get()).data()
+    expect(job?.template).toMatchObject({
+      showUnit: true,
+      showBatch: true,
+      showMfgDate: true,
+      showExpiryDate: true,
+    })
+    expect(job?.lines?.[0]).toMatchObject({
+      refId: 'prod-batch',
+      unit: 'piece',
+      batchNumber: 'BATCH-1',
+      manufacturedAt: '2026-10-20',
+      expiryAt: '2026-11-20',
+      netQuantity: '500 g',
+    })
+  })
+
+  it('posts a GST purchase, updates stock, refuses duplicates and reverses on cancel', async () => {
+    await adminDb.doc('customers/supplier-1').set({
+      ...customerPayload('supplier-1'),
+      name: 'Flour Supplier',
+      accountGroup: 'supplier',
+      state: 'Madhya Pradesh',
+    })
+    await adminDb.doc('inventoryItems/item-flour').set({
+      id: 'item-flour',
+      name: 'Flour',
+      kind: 'raw_material',
+      outletId: 'o1',
+      departmentId: 'd1',
+      unit: 'kg',
+      currentQty: 10,
+      active: true,
+      createdAt: NOW,
+      updatedAt: NOW,
+      createdBy: 'manager',
+      updatedBy: 'manager',
+    })
+
+    const token = await tokenFor('manager')
+    const purchaseId = randomUUID()
+    const posted = await post('/.netlify/functions/purchase-operation', {
+      action: 'post',
+      requestId: purchaseId,
+      outletId: 'o1',
+      departmentId: 'd1',
+      supplierId: 'supplier-1',
+      invoiceNumber: 'INV-100',
+      invoiceDate: NOW,
+      receivedAt: NOW,
+      taxTreatment: 'regular',
+      supplyType: 'intra_state',
+      itcClaimable: true,
+      lines: [{
+        itemType: 'inventory',
+        itemId: 'item-flour',
+        quantity: 5,
+        ratePaise: 10000,
+        discountPercent: 0,
+        taxPercent: 18,
+        taxInclusive: false,
+      }],
+    }, { token })
+    expect(posted.status).toBe(200)
+    expect(await json(posted)).toMatchObject({ purchaseId, payablePaise: 59000 })
+
+    expect((await adminDb.doc('inventoryItems/item-flour').get()).data()?.currentQty).toBe(15)
+    const purchase = (await adminDb.doc(`purchases/${purchaseId}`).get()).data()
+    expect(purchase).toMatchObject({
+      status: 'posted',
+      taxablePaise: 50000,
+      taxPaise: 9000,
+      cgstPaise: 4500,
+      sgstPaise: 4500,
+      igstPaise: 0,
+      payablePaise: 59000,
+    })
+    const movements = await adminDb.collection('inventoryMovements')
+      .where('sourceId', '==', purchaseId).get()
+    expect(movements.docs).toHaveLength(1)
+    expect(movements.docs[0].data()).toMatchObject({
+      type: 'purchase',
+      quantity: 5,
+      balanceBefore: 10,
+      balanceAfter: 15,
+    })
+
+    await expectFailure(
+      await post('/.netlify/functions/purchase-operation', {
+        action: 'post',
+        requestId: randomUUID(),
+        outletId: 'o1',
+        departmentId: 'd1',
+        supplierId: 'supplier-1',
+        invoiceNumber: 'INV-100',
+        invoiceDate: NOW,
+        receivedAt: NOW,
+        taxTreatment: 'regular',
+        supplyType: 'intra_state',
+        itcClaimable: true,
+        lines: [{
+          itemType: 'inventory',
+          itemId: 'item-flour',
+          quantity: 1,
+          ratePaise: 10000,
+          discountPercent: 0,
+          taxPercent: 18,
+          taxInclusive: false,
+        }],
+      }, { token }),
+      409,
+      'already-exists',
+    )
+
+    const cancelled = await post('/.netlify/functions/purchase-operation', {
+      action: 'cancel',
+      purchaseId,
+      reason: 'Goods returned to supplier',
+    }, { token })
+    expect(cancelled.status).toBe(200)
+    expect((await adminDb.doc('inventoryItems/item-flour').get()).data()?.currentQty).toBe(10)
+    expect((await adminDb.doc(`purchases/${purchaseId}`).get()).data()?.status).toBe('cancelled')
+    const allMovements = await adminDb.collection('inventoryMovements')
+      .where('sourceId', '==', purchaseId).get()
+    expect(allMovements.docs.map((movement) => movement.data().type).sort()).toEqual(
+      ['purchase', 'purchase_return'],
+    )
+  })
+
+  it('requires finance permission for supplier payments', async () => {
+    await adminDb.doc('customers/supplier-1').set({
+      ...customerPayload('supplier-1'),
+      name: 'Flour Supplier',
+      accountGroup: 'supplier',
+    })
+
+    await expectFailure(
+      await post('/.netlify/functions/purchase-operation', {
+        action: 'supplier_payment',
+        requestId: randomUUID(),
+        supplierId: 'supplier-1',
+        outletId: 'o1',
+        amountPaise: 5000,
+        mode: 'cash',
+        paidAt: NOW,
+      }, { token: await tokenFor('cake') }),
+      403,
+      'permission-denied',
+    )
+
+    const paymentId = randomUUID()
+    const paid = await post('/.netlify/functions/purchase-operation', {
+      action: 'supplier_payment',
+      requestId: paymentId,
+      supplierId: 'supplier-1',
+      outletId: 'o1',
+      amountPaise: 5000,
+      mode: 'cash',
+      paidAt: NOW,
+    }, { token: await tokenFor('manager') })
+    expect(paid.status).toBe(200)
+    expect((await adminDb.doc(`supplierPayments/${paymentId}`).get()).data()).toMatchObject({
+      amountPaise: 5000,
+      status: 'posted',
+    })
   })
 })
 

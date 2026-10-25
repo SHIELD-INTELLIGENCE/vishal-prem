@@ -107,6 +107,27 @@ export function inventoryItemMovementsQuery(
   return query(base, ...constraints)
 }
 
+export function inventoryMovementsInRangeQuery(
+  outletId: ID,
+  profile: UserProfile,
+  from: string,
+  to: string,
+  max = 1500,
+): Query | null {
+  if (!db || !outletId) return null
+  if (!outletWide(profile) && departments(profile).length === 0) return null
+  const base = collection(db, 'inventoryMovements') as CollectionReference
+  const constraints: QueryConstraint[] = [
+    where('outletId', '==', outletId),
+    where('occurredAt', '>=', from),
+    where('occurredAt', '<=', to),
+  ]
+  const dept = scopedDeptConstraint(profile)
+  if (dept) constraints.push(dept)
+  constraints.push(orderBy('occurredAt', 'desc'), limit(max))
+  return query(base, ...constraints)
+}
+
 export function inventoryCountsQuery(
   outletId: ID,
   profile: UserProfile,

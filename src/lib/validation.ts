@@ -121,6 +121,15 @@ export const productSchema = z
   .object({
     name: z.string().trim().min(2, 'Product name is required'),
     alias: z.string().trim().max(60).optional(),
+    sku: z
+      .string()
+      .trim()
+      .max(48, 'Keep the SKU under 48 characters')
+      .refine(
+        (value) => value === '' || /^[\x20-\x7E]+$/.test(value),
+        'Use printable characters only; the SKU may be encoded in a barcode.',
+      )
+      .optional(),
     printName: z.string().trim().min(1, 'Print name is required').max(40),
     group: z.string().trim().min(1, 'Group is required'),
     category: z.string().trim().min(1, 'Category is required'),

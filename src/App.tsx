@@ -37,12 +37,19 @@ import { DepartmentWorkspacePage } from '@/features/departments/DepartmentWorksp
 import { OutletsPage } from '@/features/admin/OutletsPage'
 import { UsersPage } from '@/features/admin/UsersPage'
 import { ReportsPage } from '@/features/reports/ReportsPage'
+import { BusinessReportsPage } from '@/features/reports/BusinessReportsPage'
 import { SettingsPage } from '@/features/settings/SettingsPage'
 import { BusyPage } from '@/features/busy/BusyPage'
 import { HelpPage } from '@/features/help/HelpPage'
 import { OrderPrintPage } from '@/features/print/OrderPrintPage'
 import { BookingPrintPage } from '@/features/print/BookingPrintPage'
 import { PaymentPrintPage } from '@/features/print/PaymentPrintPage'
+import { LabelPrintSetupPage } from '@/features/labels/LabelPrintSetupPage'
+import { LabelPrintPage } from '@/features/labels/LabelPrintPage'
+import { LabelsPage } from '@/features/labels/LabelsPage'
+import { LabelReconciliationPage } from '@/features/labels/LabelReconciliationPage'
+import { PurchasesPage } from '@/features/purchases/PurchasesPage'
+import { PurchaseFormPage } from '@/features/purchases/PurchaseFormPage'
 import { NotFoundPage } from '@/features/NotFoundPage'
 
 function Guarded({ permission, children }: { permission: PermissionKey; children: ReactNode }) {
@@ -113,6 +120,14 @@ export function AppRoutes() {
           element={
             <Guarded permission="paymentsView">
               <PaymentPrintPage />
+            </Guarded>
+          }
+        />
+        <Route
+          path={`${ADMIN_BASE}/print/labels/:id`}
+          element={
+            <Guarded permission="labelsView">
+              <LabelPrintPage />
             </Guarded>
           }
         />
@@ -309,6 +324,54 @@ export function AppRoutes() {
             }
           />
           <Route
+            path="labels/items"
+            element={
+              <Guarded permission="labelsView">
+                <LabelPrintSetupPage jobType="item" />
+              </Guarded>
+            }
+          />
+          <Route
+            path="labels/accounts"
+            element={
+              <Guarded permission="labelsView">
+                <LabelPrintSetupPage jobType="account" />
+              </Guarded>
+            }
+          />
+          <Route
+            path="labels/usage"
+            element={
+              <Guarded permission="labelsView">
+                <LabelsPage />
+              </Guarded>
+            }
+          />
+          <Route
+            path="labels/reconciliation"
+            element={
+              <Guarded permission="labelsView">
+                <LabelReconciliationPage />
+              </Guarded>
+            }
+          />
+          <Route
+            path="purchases"
+            element={
+              <Guarded permission="purchasesView">
+                <PurchasesPage />
+              </Guarded>
+            }
+          />
+          <Route
+            path="purchases/new"
+            element={
+              <Guarded permission="purchasesManage">
+                <PurchaseFormPage />
+              </Guarded>
+            }
+          />
+          <Route
             path="deliveries"
             element={
               <Guarded permission="deliveryView">
@@ -329,6 +392,14 @@ export function AppRoutes() {
             element={
               <Guarded permission="reportsView">
                 <ReportsPage />
+              </Guarded>
+            }
+          />
+          <Route
+            path="reports/business"
+            element={
+              <Guarded permission="reportsView">
+                <BusinessReportsPage />
               </Guarded>
             }
           />

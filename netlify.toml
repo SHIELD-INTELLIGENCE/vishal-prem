@@ -2,6 +2,19 @@
   command = "npm ci && npm --prefix functions ci && npm run build && npm run functions:build"
   publish = "dist"
 
+# Local development. `npm run dev` starts Netlify Dev, which serves the Vite
+# SPA and the real `/.netlify/functions/*` routes from one origin. Running
+# `vite` directly (`npm run dev:vite`) serves only the SPA, so trusted writes
+# would return a 404. Netlify Dev proxies the SPA on 5173 and exposes the
+# combined site on 8888.
+[dev]
+  command = "npm run dev:vite -- --port 5173 --strictPort"
+  targetPort = 5173
+  port = 8888
+  framework = "#custom"
+  autoLaunch = false
+  functions = "netlify/functions"
+
 [build.environment]
   NODE_VERSION = "22"
   SECRETS_SCAN_OMIT_KEYS = "VITE_EMULATOR_HOST,VITE_AUTH_EMULATOR_PORT,VITE_FIRESTORE_EMULATOR_PORT,VITE_STORAGE_EMULATOR_PORT,VITE_FIREBASE_PROJECT_ID,VITE_FIREBASE_AUTH_DOMAIN,VITE_FIREBASE_STORAGE_BUCKET"

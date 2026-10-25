@@ -1,8 +1,12 @@
 # Security model and known limits
 
+> **Simple explanation:** This is the shop's security guard manual. It says who can enter which room, what the guard checks at the door, and what the guard cannot do. The short version: the browser is not trusted, every serious action is checked again in the back room, and the master keys never go into the browser.
+
 This document describes what the system enforces, what it does not, and which actions remain the owner's responsibility.
 
 ## 1. Core principles
+
+> **Simple explanation:** The gatekeeper says "no" first. A door opens only if there is a written rule for that exact door and that exact person. The browser's public settings are like the shop's address, not the keys.
 
 - **Deny by default.** `firestore.rules` ends with a catch-all `allow read, write: if false`. Nothing is reachable unless a rule explicitly permits it.
 - **Trusted server boundary.** The browser uses the Firebase client SDK for reads and permitted metadata writes. Authoritative order creation, cancellation, order payments and manual stock adjustments run through same-origin Netlify Functions with the Firebase Admin SDK isolated under `functions/`. No service-account key, Admin SDK credential or privileged code is shipped in the browser bundle. Staff-account removal remains a client write plus a manual Firebase Console step; see [STAFF_DELETION.md](STAFF_DELETION.md).
@@ -11,6 +15,8 @@ This document describes what the system enforces, what it does not, and which ac
 - **Least privilege for staff.** Department admins are scoped to their department. Managers and accountants are scoped to their outlet across departments. Super Admins are the only global role.
 
 ## 2. Identity and staff lifecycle
+
+> **Simple explanation:** A staff member needs two things: a login account and a switched-on staff card in Firestore. No card means no entry. A switched-off card means no entry even if the login still works. The first manager's card is made by hand; everyone else joins by invitation.
 
 - Authentication is Firebase Email/Password. There is no public sign-up page.
 - A signed-in account with no `users/{uid}` document sees an "account not linked" state and can read nothing.
@@ -26,6 +32,8 @@ This document describes what the system enforces, what it does not, and which ac
 - The first Super Admin is seeded manually. See [FIREBASE_SETUP.md](FIREBASE_SETUP.md).
 
 ## 3. Authorization matrix
+
+> **Simple explanation:** This table is the guard's room-by-room list. "Read" means can look, "Create" means can add a new page, "Update" means can change an existing page, and "Delete" means can remove it. Most history pages are append-only: you add a new page instead of rubbing out the old one.
 
 | Collection | Read | Create | Update | Delete |
 | --- | --- | --- | --- | --- |
@@ -50,6 +58,8 @@ Payment records, booking revisions and all operational history are append-only f
 
 ## 4. What remains outside the trusted boundary
 
+> **Simple explanation:** Some jobs are too important to leave to the browser: taking an order, cancelling it, recording money, changing stock, sending a delivery and closing the cash drawer. Those jobs always go through the back room, even if the button is in the browser.
+
 The trusted Functions path owns order creation/cancellation/payments, booking creation/editing/payments, manual product-stock adjustments, production queues, inventory movements/transfers/counts, delivery dispatch/completion/collections, expenses, cash sessions and the minimal staff directory. Each request verifies a Firebase ID token with Admin Auth (including revocation), derives the actor only from that token, loads the live profile, validates permission and outlet/department scope, validates the payload and performs the authoritative write in a Firestore transaction. Netlify Admin SDK writes bypass Firestore rules, so these server checks are mandatory and repeated independently of the UI. Direct client writes to orders, bookings, booking revisions, payments and every new operational collection are denied by `firestore.rules`. The following gaps remain deliberately outside this milestone:
 
 - **Stock tracking and conversion changes are locked after creation.** A metadata edit cannot change `trackStock` or `conversionFactor`; both are preserved from the live product. Enabling tracking later, changing an issue factor, or converting existing balances needs a separate policy and migration because it can reinterpret stock meaning or future order consumption.
@@ -68,6 +78,8 @@ For strict accounting or tamper-proof numbering, the remaining server work is a 
 
 ## 5. Sensitive data policy
 
+> **Simple explanation:** Do not keep Aadhaar numbers, ID photos, card numbers, CVVs, UPI PINs or passwords in this system. A customer's phone number is contact information, not proof of identity. Product photos are public, so never upload private papers there.
+
 - **No Aadhaar numbers, ID scans or biometric data.** The data model has no field for them and this is intentional.
 - **GSTIN and PAN are optional.** Collect them only when a business transaction (GST invoice, credit account) actually requires them.
 - Customer phone and email are contact data, not identity proof.
@@ -76,6 +88,8 @@ For strict accounting or tamper-proof numbering, the remaining server work is a 
 - Product images are publicly readable. Do not upload confidential documents to the product image bucket.
 
 ## 6. Storage rules
+
+> **Simple explanation:** The photo cupboard is open for everyone to look at product pictures, but only authorised catalogue staff can put pictures in or take them out. Each picture must be an image and under 4 MB.
 
 `storage.rules` allows:
 

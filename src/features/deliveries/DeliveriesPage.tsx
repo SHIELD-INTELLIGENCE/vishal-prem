@@ -205,6 +205,7 @@ export function DeliveriesPage() {
           searchPlaceholder="Search delivery, source, customer or address…"
           searchFields={(delivery) => [delivery.deliveryNumber, delivery.sourceNumber, delivery.customerName, delivery.customerPhone, delivery.address, delivery.assignedToName]}
           exportFilename={`deliveries-${format(new Date(), 'yyyy-MM-dd')}.csv`}
+          exportDate={(delivery) => delivery.scheduledAt}
           emptyTitle={statusFilter === 'open' ? 'No open deliveries' : 'No deliveries'}
           emptyDescription="Create a delivery from an eligible delivery order or booking. Delivery records are separate from the commercial sale and payment."
           emptyAction={hasPermission(profile, 'deliveryManage') ? <Button onClick={() => setCreateOpen(true)} leftIcon={<Plus className="h-4 w-4" />}>Create delivery</Button> : undefined}

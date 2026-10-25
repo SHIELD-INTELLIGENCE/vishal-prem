@@ -14,7 +14,8 @@ import { useAuth } from '@/auth/AuthProvider'
 import { useWorkspace } from '@/auth/WorkspaceProvider'
 import { hasPermission } from '@/auth/permissions'
 import { useCollectionData } from '@/data/hooks'
-import { productsQuery } from '@/data/queries'
+import { useProductCatalogue } from '@/data/productCatalogue'
+import { productStockState } from '@/lib/productCatalogue'
 import {
   inventoryCountsQuery,
   inventoryItemsQuery,
@@ -26,7 +27,8 @@ import {
   recordInventoryMovement,
   transferInventory,
 } from '@/data/inventory'
-import { adjustProductStock } from '@/data/productStock'
+import { EnableStockTrackingDialog } from '@/features/products/EnableStockTrackingDialog'
+import { StockAdjustmentDialog } from '@/features/products/StockAdjustmentDialog'
 import type {
   InventoryCount,
   InventoryItem,
@@ -73,6 +75,7 @@ export function InventoryPage() {
   const [countItem, setCountItem] = useState<InventoryItem | null>(null)
   const [transferOpen, setTransferOpen] = useState(false)
   const [adjustProduct, setAdjustProduct] = useState<Product | null>(null)
+  const [enableStockProduct, setEnableStockProduct] = useState<Product | null>(null)
   const [kindFilter, setKindFilter] = useState('all')
 
   const outletId = selectedOutlet?.id ?? ''
@@ -91,11 +94,7 @@ export function InventoryPage() {
     [outletId, profile?.uid, profile?.role, profile?.departmentIds.join(',')],
     Boolean(profile && outletId),
   )
-  const productsState = useCollectionData<Product>(
-    () => (profile && outletId ? productsQuery(outletId, profile, 500) : null),
-    [outletId, profile?.uid, profile?.role, profile?.departmentIds.join(',')],
-    Boolean(profile && outletId),
-  )
+  const productsState = useProductCatalogue(profile, outletId)
 
   const items = useMemo(
     () => itemsState.rows.filter((item) => kindFilter === 'all' || item.kind === kindFilter),
@@ -295,6 +294,7 @@ export function InventoryPage() {
           searchPlaceholder="Search item, reason, reference or staff…"
           searchFields={(movement) => [movement.itemName, movement.reason, movement.reference, movement.actorName, movement.type]}
           exportFilename={`inventory-movements-${format(new Date(), 'yyyy-MM-dd')}.csv`}
+          exportDate={(movement) => movement.occurredAt}
           emptyTitle="No stock movements"
           emptyDescription="Purchases, issues, consumption, returns, wastage, transfers and count adjustments appear here. History cannot be edited."
           mobileTitle={(movement) => movement.itemName}
@@ -310,6 +310,7 @@ export function InventoryPage() {
           searchPlaceholder="Search item, reason or staff…"
           searchFields={(count) => [count.itemName, count.reason, count.actorName]}
           exportFilename={`inventory-counts-${format(new Date(), 'yyyy-MM-dd')}.csv`}
+          exportDate={(count) => count.countedAt}
           emptyTitle="No stock counts"
           emptyDescription="Record a physical count to compare it with the ledger. A variance creates an audited count-adjustment movement."
           mobileTitle={(count) => count.itemName}
@@ -318,24 +319,64 @@ export function InventoryPage() {
         />
       ) : (
         <DataTable
-          rows={productsState.rows.filter((product) => product.trackStock)}
+          rows={productsState.rows}
           columns={[
             { key: 'name', header: 'Product', accessor: (product) => product.name, render: (product) => <span className="font-semibold">{product.name}</span>, sortable: true },
             { key: 'department', header: 'Department', accessor: (product) => departments.find((department) => department.id === product.departmentId)?.name ?? '—', hideBelow: 'md' },
-            { key: 'stock', header: 'Stock on hand', accessor: (product) => product.stockQty ?? 0, render: (product) => formatQuantity(product.stockQty ?? 0, product.unit), align: 'right', sortable: true },
-            { key: 'critical', header: 'Critical level', accessor: (product) => product.criticalStock ?? 0, render: (product) => formatQuantity(product.criticalStock ?? 0, product.unit), align: 'right', hideBelow: 'lg' },
+            {
+              key: 'tracking',
+              header: 'Stock control',
+              accessor: (product) => product.trackStock ? 'Tracked' : 'Not tracked',
+              render: (product) => (
+                <Badge tone={product.trackStock ? 'success' : 'neutral'}>
+                  {product.trackStock ? 'Tracked' : 'Not tracked'}
+                </Badge>
+              ),
+              hideBelow: 'md',
+            },
+            {
+              key: 'stock',
+              header: 'Stock on hand',
+              accessor: (product) => productStockState(product).qty ?? -1,
+              render: (product) => {
+                const stock = productStockState(product)
+                if (!stock.tracked) return <span className="text-[11px] text-ink-400">Not tracked</span>
+                return (
+                  <span className={stock.low ? 'font-semibold text-gold-800' : ''}>
+                    {formatQuantity(stock.qty ?? 0, product.unit)}
+                  </span>
+                )
+              },
+              align: 'right',
+              sortable: true,
+            },
+            { key: 'critical', header: 'Critical level', accessor: (product) => product.criticalStock ?? 0, render: (product) => product.trackStock ? formatQuantity(product.criticalStock ?? 0, product.unit) : '—', align: 'right', hideBelow: 'lg' },
             { key: 'value', header: 'Sale price', accessor: (product) => product.salePricePaise, render: (product) => formatINR(product.salePricePaise), align: 'right', hideBelow: 'lg' },
           ]}
           getRowId={(product) => product.id}
           loading={productsState.loading}
           searchPlaceholder="Search finished product…"
-          searchFields={(product) => [product.name, product.alias]}
+          searchFields={(product) => [product.name, product.alias, product.sku]}
           exportFilename={`finished-stock-${format(new Date(), 'yyyy-MM-dd')}.csv`}
-          emptyTitle="No tracked finished products"
-          emptyDescription="Products with stock tracking enabled appear here. Their master price and catalogue record are not duplicated."
+          emptyTitle="No finished products"
+          emptyDescription="Products from the catalogue appear here. Untracked products are shown so they can be converted to stock control without recreating them."
+          toolbar={productsState.hasMore ? (
+            <Button size="sm" variant="outline" onClick={productsState.loadMore} loading={productsState.loading}>
+              Load more ({productsState.loaded} loaded)
+            </Button>
+          ) : undefined}
           mobileTitle={(product) => product.name}
-          mobileSubtitle={(product) => `${formatQuantity(product.stockQty ?? 0, product.unit)} on hand`}
-          rowActions={(product) => canAdjust ? <Button size="sm" variant="outline" onClick={() => setAdjustProduct(product)}>Adjust</Button> : undefined}
+          mobileSubtitle={(product) => {
+            const stock = productStockState(product)
+            return stock.tracked ? `${formatQuantity(stock.qty ?? 0, product.unit)} on hand` : 'Stock not tracked'
+          }}
+          rowActions={(product) => {
+            if (!canAdjust) return undefined
+            if (product.trackStock) {
+              return <Button size="sm" variant="outline" onClick={() => setAdjustProduct(product)}>Adjust</Button>
+            }
+            return <Button size="sm" variant="outline" onClick={() => setEnableStockProduct(product)}>Enable stock</Button>
+          }}
         />
       )}
 
@@ -353,7 +394,22 @@ export function InventoryPage() {
         items={itemsState.rows.filter((item) => item.active)}
         departments={departments}
       />
-      <AdjustProductDialog product={adjustProduct} onClose={() => setAdjustProduct(null)} />
+      {adjustProduct && (
+        <StockAdjustmentDialog
+          open={Boolean(adjustProduct)}
+          onOpenChange={(open) => { if (!open) setAdjustProduct(null) }}
+          product={adjustProduct}
+          onAdjusted={() => productsState.reload()}
+        />
+      )}
+      {enableStockProduct && (
+        <EnableStockTrackingDialog
+          open={Boolean(enableStockProduct)}
+          onOpenChange={(open) => { if (!open) setEnableStockProduct(null) }}
+          product={enableStockProduct}
+          onEnabled={() => productsState.reload()}
+        />
+      )}
     </div>
   )
 }
@@ -603,53 +659,6 @@ function TransferDialog({
         <SelectField label="To item" required value={to} onChange={(event) => setTo(event.target.value)} options={items.filter((item) => item.id !== from).map((item) => ({ value: item.id, label: label(item) }))} placeholder="Choose destination" />
         {fromItem && <TextField label={`Quantity (${fromItem.unit})`} required type="number" min="0" step="0.001" max={fromItem.currentQty} value={quantity} onChange={(event) => setQuantity(event.target.value)} />}
         <TextareaField label="Reason" required value={reason} onChange={(event) => setReason(event.target.value)} maxLength={500} />
-      </div>
-    </Dialog>
-  )
-}
-
-function AdjustProductDialog({ product, onClose }: { product: Product | null; onClose: () => void }) {
-  const [delta, setDelta] = useState('')
-  const [reason, setReason] = useState('')
-  const [busy, setBusy] = useState(false)
-  if (!product) return null
-
-  async function submit() {
-    if (!delta || !reason.trim()) {
-      toast.error('Enter the adjustment and a reason.')
-      return
-    }
-    setBusy(true)
-    try {
-      await adjustProductStock({
-        requestId: uniqueId(),
-        productId: product!.id,
-        delta: Number(delta),
-        reason,
-      })
-      toast.success('Finished stock adjusted')
-      setDelta('')
-      setReason('')
-      onClose()
-    } catch (error) {
-      toast.error(friendlyFirebaseError(error))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <Dialog
-      open={Boolean(product)}
-      onOpenChange={(openState) => { if (!openState) onClose() }}
-      title={`Adjust finished stock · ${product.name}`}
-      description={`Current stock: ${formatQuantity(product.stockQty ?? 0, product.unit)}`}
-      footer={<><Button variant="outline" onClick={onClose}>Cancel</Button><Button onClick={submit} loading={busy}>Post adjustment</Button></>}
-    >
-      <div className="space-y-3">
-        <TextField label={`Quantity change (${product.unit})`} required type="number" step="0.001" value={delta} onChange={(event) => setDelta(event.target.value)} hint="Use a negative value to reduce stock." />
-        <TextareaField label="Reason" required value={reason} onChange={(event) => setReason(event.target.value)} maxLength={500} />
-        <p className="rounded-lg bg-ivory-100 px-3 py-2 text-xs text-ink-500">This uses the existing trusted finished-stock operation and writes its own audit record. It does not edit the product price or catalogue details.</p>
       </div>
     </Dialog>
   )

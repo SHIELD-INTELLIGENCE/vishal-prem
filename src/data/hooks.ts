@@ -7,7 +7,7 @@ import {
   type QuerySnapshot,
   type DocumentSnapshot,
 } from 'firebase/firestore'
-import { db } from '@/lib/firebase'
+import { db, FirebaseUnavailableError } from '@/lib/firebase'
 import { friendlyFirebaseError } from '@/lib/errors'
 
 export interface LiveCollectionState<T> {
@@ -42,6 +42,12 @@ export function useCollectionData<T>(
   useEffect(() => {
     if (!enabled) {
       setRows([])
+      setLoading(false)
+      return
+    }
+    if (!db) {
+      setRows([])
+      setError(friendlyFirebaseError(new FirebaseUnavailableError()))
       setLoading(false)
       return
     }
@@ -112,7 +118,12 @@ export function useDocumentData<T>(
   const [nonce, setNonce] = useState(0)
 
   useEffect(() => {
-    if (!path || !enabled || !db) {
+    if (!path || !enabled) {
+      setLoading(false)
+      return
+    }
+    if (!db) {
+      setError(friendlyFirebaseError(new FirebaseUnavailableError()))
       setLoading(false)
       return
     }

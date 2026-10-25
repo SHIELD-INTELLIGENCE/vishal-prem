@@ -17,7 +17,8 @@ import { useAuth } from '@/auth/AuthProvider'
 import { useWorkspace } from '@/auth/WorkspaceProvider'
 import { hasPermission, scopedDepartments } from '@/auth/permissions'
 import { useCollectionData } from '@/data/hooks'
-import { customersQuery, productsQuery } from '@/data/queries'
+import { useProductCatalogue } from '@/data/productCatalogue'
+import { customersQuery } from '@/data/queries'
 import { createOrderSecure } from '@/data/orders'
 import { stockDemandByProduct } from '@/features/orders/orderStockWarning'
 import { calculateLine, resolveOrderDiscount } from '@/lib/calculations'
@@ -68,11 +69,7 @@ export function OrderFormPage() {
   const requestedDepartment = requestedDepartmentId && allowedDepartments.some((item) => item.id === requestedDepartmentId)
     ? requestedDepartmentId
     : null
-  const productsState = useCollectionData<Product>(
-    () => (profile && outletId ? productsQuery(outletId, profile, 500) : null),
-    [profile?.uid, outletId, profile?.role, profile?.departmentIds.join(',')],
-    Boolean(profile && outletId),
-  )
+  const productsState = useProductCatalogue(profile, outletId)
   const customersState = useCollectionData<Customer>(
     () => (outletId ? customersQuery(outletId, 500) : null),
     [outletId],

@@ -1,5 +1,7 @@
 # Deployment — Netlify static frontend + Netlify Functions
 
+> **Simple explanation:** The website is like the shop's front counter. Netlify serves that counter to the browser. The serious work — taking an order, cancelling it, recording a payment, changing stock — happens behind the counter in small server programs called Netlify Functions. The browser is never trusted to do the maths alone. Firebase is the record room where logins and data live.
+
 The app is a static SPA built into `dist/`. Authoritative order, payment and stock operations run in Netlify Functions under `netlify/functions/` and use the Firebase Admin SDK. Firebase Auth and Firestore remain the identity and data layer.
 
 `netlify.toml` supplies:
@@ -31,6 +33,8 @@ They are same-origin with the SPA, so the browser CSP only needs `connect-src 's
 
 ### Public client configuration
 
+> **Simple explanation:** These six values are like the shop's public address and phone number. They are safe to show in the browser. They tell the app which Firebase project to talk to.
+
 Set these in Netlify: **Site configuration → Environment variables**, scope **Builds**:
 
 ```text
@@ -46,9 +50,11 @@ Vite inlines `VITE_*` values at build time. Changing one requires a new deploy. 
 
 Leave `VITE_USE_FIREBASE_EMULATORS` unset or `false` in production.
 
-`VITE_FUNCTIONS_BASE_URL` is only for local development against a separately running Functions server. Leave it unset in production so calls go to `/.netlify/functions`.
+`VITE_FUNCTIONS_BASE_URL` is only for a native/separate-origin client or local development against a separately running Functions server. Normal local development uses `npm run dev` (Netlify Dev), which serves same-origin `/.netlify/functions/*` and does not need this value. Leave it unset in production so calls go to `/.netlify/functions`.
 
 ### Server-only Firebase Admin credentials
+
+> **Simple explanation:** These are the shop's private keys. They stay in the server room (Netlify Functions environment) and never go into the browser. If they leak, someone can open the record room directly.
 
 The Netlify Functions runtime is not Google infrastructure, so the Admin SDK needs an explicit service account. Set these in Netlify with scope **Functions**:
 
@@ -88,11 +94,13 @@ The endpoint rejects requests from any other browser origin. Non-browser callers
 
 ## 3. Manual deployment workflow
 
+> **Simple explanation:** Do not drag only the `dist` folder into Netlify. That publishes the shop counter but leaves the back-room staff (Functions) behind. Netlify must build both together from the repository.
+
 **The existing `dist/` drag-and-drop is not sufficient.** A manual Netlify deploy of a prebuilt output folder publishes static files but does not build or bundle `netlify/functions/`. Do not describe dragging `dist/` as a full deployment of this backend.
 
 The smallest supported workflow that avoids a local Netlify CLI is a **Git-connected Netlify site**:
 
-1. Put the repository in a Git remote (the workspace is not currently a Git repository).
+1. Put the repository in a Git remote. This workspace is already a Git repository, but a Netlify site is not connected to it from here.
 2. In Netlify, import that repository.
 3. Set the base directory to the repository root, build command `npm run build`, publish directory `dist`.
 4. Confirm Netlify detects the Functions directory from `netlify.toml`.
@@ -103,9 +111,11 @@ This is a change from the current drag-and-drop process and has not been approve
 
 A single drag-and-drop of the project folder with a Netlify-run build might detect Functions, but that behaviour has not been verified for this repository and must not be claimed as supported until a real test deploy confirms it.
 
-No deployment of the SPA, Netlify Functions, Firestore rules or Firebase Functions was performed from this workspace.
+The SPA, Netlify Functions and Firebase Functions have **not** been deployed from this workspace. The Firestore rules **were** deployed to `vishal-prem` on 2026-10-25; the composite indexes still need a project Owner/Editor because the local service account lacks `datastore.indexes.create`.
 
 ## 4. Firebase rules and legacy Functions
+
+> **Simple explanation:** Firestore rules are the gatekeeper's rulebook. Indexes are the gatekeeper's quick-find registers. The app can open only if the rulebook and registers are deployed. The old Firebase Functions are kept as a spare key, but the app now uses the Netlify Functions.
 
 Firestore rules and indexes are still deployed through Firebase tooling by the project owner:
 
@@ -147,6 +157,8 @@ Netlify Functions and static assets are matched before this catch-all. Verify af
 
 ## 7. Headers and CSP
 
+> **Simple explanation:** These are the shop's safety rules: only approved doors open, the building cannot be embedded inside another website, and the browser is not allowed to load random scripts from the internet.
+
 `netlify.toml` sets strict transport security, `nosniff`, frame options, referrer policy, a restrictive permissions policy and a CSP limited to self plus Firebase Auth/Firestore/Storage endpoints. The trusted Netlify endpoints are same-origin.
 
 If the domain or third-party API changes, extend the CSP deliberately rather than removing it.
@@ -174,6 +186,8 @@ If a rules change caused the incident, roll back `firestore.rules` separately wi
 The current frontend depends on the Netlify endpoints. Rolling back to an older frontend that still calls Firebase callables requires that the legacy Functions package remains deployed.
 
 ## 10. Capacitor (not tested here)
+
+> **Simple explanation:** Capacitor is a wrapper that puts the website inside an Android app, like putting the same shop inside a mobile case. It has not been tested on a real phone yet, so do not promise it to the owner as working.
 
 The build is a static bundle, so Capacitor can wrap it, but the following must be verified on a real device:
 

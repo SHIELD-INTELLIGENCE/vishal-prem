@@ -121,6 +121,11 @@ function makePermissions(value: boolean): PermissionMap {
     usersManage: value,
     settingsManage: value,
     busyView: value,
+    labelsView: value,
+    labelsManage: value,
+    labelsReconcile: value,
+    purchasesView: value,
+    purchasesManage: value,
   }
 }
 

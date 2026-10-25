@@ -47,3 +47,15 @@ export function makeBookingNumber(outletCode: string, date = new Date()): string
 export function makeReceiptNumber(outletCode: string, date = new Date()): string {
   return `RCPT-${outletCode}-${dateStamp(date)}-${codeSuffix(4)}`
 }
+
+export function makeLabelJobNumber(outletCode: string, date = new Date()): string {
+  return `LBL-${outletCode}-${dateStamp(date)}-${codeSuffix(4)}`
+}
+
+export function makePurchaseNumber(outletCode: string, date = new Date()): string {
+  return `PUR-${outletCode}-${dateStamp(date)}-${codeSuffix(4)}`
+}
+
+export function makeSupplierPaymentNumber(outletCode: string, date = new Date()): string {
+  return `SPAY-${outletCode}-${dateStamp(date)}-${codeSuffix(4)}`
+}

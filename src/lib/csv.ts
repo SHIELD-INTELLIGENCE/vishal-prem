@@ -6,8 +6,14 @@ export interface CsvColumn<T> {
 function escapeCell(value: string | number | boolean | null | undefined): string {
   if (value === null || value === undefined) return ''
   let text = String(value)
-  // Spreadsheet formula injection protection.
-  if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`
+  // Spreadsheet formula injection protection. A legitimate signed number such
+  // as `-5` or `+0.25` must survive unchanged, so only prefix values that start
+  // with a formula character and are not plain numeric data.
+  if (/^[=@\t\r]/.test(text)) {
+    text = `'${text}`
+  } else if (/^[+-]/.test(text) && !/^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(text)) {
+    text = `'${text}`
+  }
   if (/[",\n\r]/.test(text)) return `"${text.replace(/"/g, '""')}"`
   return text
 }

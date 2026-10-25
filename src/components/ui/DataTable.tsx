@@ -11,8 +11,9 @@ import {
   X,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { downloadCsv, type CsvColumn } from '@/lib/csv'
+import type { CsvExportColumn } from '@/lib/csvExport'
 import { Button, IconButton } from './Button'
+import { CsvExportDialog } from './CsvExportDialog'
 import { EmptyState, ErrorState, TableSkeleton } from './States'
 
 export interface DataColumn<T> {
@@ -45,6 +46,12 @@ export interface DataTableProps<T> {
   emptyHelp?: string
   toolbar?: ReactNode
   exportFilename?: string
+  exportTitle?: string
+  exportDescription?: string
+  /** Date accessor for the export date range. Omit for undated tables. */
+  exportDate?: (row: T) => string | null | undefined
+  exportInitialFrom?: string
+  exportInitialTo?: string
   onRowClick?: (row: T) => void
   rowActions?: (row: T) => ReactNode
   mobileTitle: (row: T) => ReactNode
@@ -85,6 +92,11 @@ export function DataTable<T>({
   emptyHelp,
   toolbar,
   exportFilename,
+  exportTitle,
+  exportDescription,
+  exportDate,
+  exportInitialFrom,
+  exportInitialTo,
   onRowClick,
   rowActions,
   mobileTitle,
@@ -101,6 +113,7 @@ export function DataTable<T>({
   const [page, setPage] = useState(1)
   const [sort, setSort] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(initialSort ?? null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [exportOpen, setExportOpen] = useState(false)
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase()
@@ -172,12 +185,16 @@ export function DataTable<T>({
 
   function handleExport() {
     if (!exportFilename) return
-    const csvColumns: CsvColumn<T>[] = columns.map((column) => ({
+    setExportOpen(true)
+  }
+
+  const exportColumns: CsvExportColumn<T>[] = columns
+    .filter((column) => Boolean(column.header))
+    .map((column) => ({
+      key: column.key,
       header: column.header,
       value: (row) => column.csvValue?.(row) ?? column.accessor?.(row) ?? '',
     }))
-    downloadCsv(exportFilename, sorted, csvColumns)
-  }
 
   const searchInput = searchable ? (
     <div className="relative min-w-56 flex-1 sm:max-w-xs">
@@ -439,6 +456,21 @@ export function DataTable<T>({
             </div>
           </div>
         </>
+      )}
+
+      {exportFilename && (
+        <CsvExportDialog
+          open={exportOpen}
+          onOpenChange={setExportOpen}
+          title={exportTitle}
+          description={exportDescription}
+          filename={exportFilename}
+          rows={sorted}
+          columns={exportColumns}
+          getDate={exportDate}
+          initialFrom={exportInitialFrom}
+          initialTo={exportInitialTo}
+        />
       )}
     </div>
   )

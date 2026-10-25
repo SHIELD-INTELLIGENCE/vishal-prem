@@ -380,6 +380,52 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
+    // ---------------------------------------------------------------------
+    // Label printing and physical accountability
+    //
+    // Jobs, events and usage are written only by the trusted label endpoint.
+    // Reads are scoped exactly like inventory, but account labels are
+    // outlet-wide and use an empty departmentId, so they remain visible to
+    // department operators.
+    // ---------------------------------------------------------------------
+    match /labelPrintJobs/{jobId} {
+      allow get, list: if isActive()
+        && (hasPerm('labelsView') || hasPerm('labelsManage') || hasPerm('labelsReconcile'))
+        && outletAllowed(resource.data.outletId)
+        && (resource.data.departmentId == '' || deptAllowed(resource.data.departmentId));
+      allow create, update, delete: if false;
+    }
+
+    match /labelEvents/{eventId} {
+      allow get, list: if isActive()
+        && (hasPerm('labelsView') || hasPerm('labelsManage') || hasPerm('labelsReconcile'))
+        && outletAllowed(resource.data.outletId)
+        && (resource.data.departmentId == '' || deptAllowed(resource.data.departmentId));
+      allow create, update, delete: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // GST-aware purchases
+    //
+    // Purchases post stock through the trusted endpoint; supplier payments
+    // are a separate money-out ledger so customer cash sessions stay exact.
+    // ---------------------------------------------------------------------
+    match /purchases/{purchaseId} {
+      allow get, list: if isActive()
+        && (hasPerm('purchasesView') || hasPerm('purchasesManage'))
+        && outletAllowed(resource.data.outletId)
+        && deptAllowed(resource.data.departmentId);
+      allow create, update, delete: if false;
+    }
+
+    match /supplierPayments/{paymentId} {
+      allow get, list: if isActive()
+        && (isSuper() || outletWide())
+        && (hasPerm('purchasesView') || hasPerm('purchasesManage'))
+        && outletAllowed(resource.data.outletId);
+      allow create, update, delete: if false;
+    }
+
     match /deliveries/{deliveryId} {
       allow get, list: if isActive()
         && (hasPerm('deliveryView') || hasPerm('deliveryManage'))

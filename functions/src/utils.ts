@@ -44,3 +44,15 @@ export function makeExpenseNumber(outletCode: string, date = new Date()): string
 export function makeCashSessionNumber(outletCode: string, date = new Date()): string {
   return `CASH-${outletCode}-${dateStamp(date)}-${codeSuffix(4)}`
 }
+
+export function makeLabelJobNumber(outletCode: string, date = new Date()): string {
+  return `LBL-${outletCode}-${dateStamp(date)}-${codeSuffix(4)}`
+}
+
+export function makePurchaseNumber(outletCode: string, date = new Date()): string {
+  return `PUR-${outletCode}-${dateStamp(date)}-${codeSuffix(4)}`
+}
+
+export function makeSupplierPaymentNumber(outletCode: string, date = new Date()): string {
+  return `SPAY-${outletCode}-${dateStamp(date)}-${codeSuffix(4)}`
+}

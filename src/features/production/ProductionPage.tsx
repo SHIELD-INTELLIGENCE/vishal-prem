@@ -209,6 +209,7 @@ export function ProductionPage() {
           searchPlaceholder="Search product, source or assignee…"
           searchFields={(task) => [task.productName, task.sourceNumber, task.assignedToName, task.notes]}
           exportFilename={`production-${format(new Date(), 'yyyy-MM-dd')}.csv`}
+          exportDate={(task) => task.dueAt}
           onRowClick={(task) => setSelected(task)}
           emptyTitle={statusFilter === 'open' ? 'No open production work' : 'No production tasks'}
           emptyDescription="Refresh from orders and bookings to create tasks for confirmed lines. Completed history is never deleted."

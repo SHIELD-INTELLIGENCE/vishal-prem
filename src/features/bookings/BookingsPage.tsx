@@ -187,6 +187,7 @@ export function BookingsPage() {
         searchPlaceholder="Search booking number, customer, phone or event…"
         searchFields={(booking) => [booking.bookingNumber, booking.customerName, booking.customerPhone, booking.eventType, booking.instructions, booking.deliveryAddress]}
         exportFilename={`party-bookings-${selectedOutlet?.code ?? 'outlet'}-${format(new Date(), 'yyyyMMdd')}.csv`}
+        exportDate={(booking) => booking.eventDate}
         emptyTitle={windowFilter === 'upcoming' ? 'No upcoming bookings' : 'No bookings found'}
         emptyDescription="Party bookings will appear here. Create one to track event details, items, advances and preparation."
         emptyHelp="bookings"

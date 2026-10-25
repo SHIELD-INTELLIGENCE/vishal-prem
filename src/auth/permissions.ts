@@ -36,7 +36,12 @@ export const PERMISSIONS: PermissionDefinition[] = [
   { key: 'deliveryManage', label: 'Manage deliveries', group: 'Operations', description: 'Create, assign, dispatch and complete deliveries and collections.' },
   { key: 'financeView', label: 'View finance', group: 'Accounts', description: 'Read party statements, expenses, cash sessions and outstanding lists.' },
   { key: 'financeManage', label: 'Manage finance', group: 'Accounts', description: 'Record expenses, cash sessions, handovers and finance corrections.' },
-  { key: 'reportsView', label: 'View reports', group: 'Overview', description: 'Access operational, inventory, delivery and finance reports and exports.' },
+  { key: 'reportsView', label: 'View reports', group: 'Overview', description: 'Access operational, inventory, purchase, tax and finance reports and exports.' },
+  { key: 'labelsView', label: 'View labels', group: 'Operations', description: 'Read label print jobs, label usage and reconciliation reports.' },
+  { key: 'labelsManage', label: 'Print labels', group: 'Operations', description: 'Create print jobs, confirm physical output, record reprints and record applied, damaged or returned labels.' },
+  { key: 'labelsReconcile', label: 'Reconcile labels', group: 'Operations', description: 'Close, reopen and correct label jobs with a recorded reason. Does not grant printing.' },
+  { key: 'purchasesView', label: 'View purchases', group: 'Accounts', description: 'Read purchase vouchers, supplier balances and purchase tax details.' },
+  { key: 'purchasesManage', label: 'Manage purchases', group: 'Accounts', description: 'Post and cancel purchase vouchers and record supplier payments.' },
   { key: 'departmentsManage', label: 'Manage departments', group: 'Administration', description: 'Create and edit departments and outlet assignment.' },
   { key: 'outletsManage', label: 'Manage outlets', group: 'Administration', description: 'Create and edit outlet details.' },
   { key: 'usersManage', label: 'Manage staff & permissions', group: 'Administration', description: 'Invite staff and change roles, scopes and permissions.' },
@@ -83,6 +88,10 @@ const DEPARTMENT_OPERATOR: PermissionKey[] = [
   'deliveryManage',
   'reportsView',
   'busyView',
+  'labelsView',
+  'labelsManage',
+  'purchasesView',
+  'purchasesManage',
 ]
 
 export interface RoleDefinition {
@@ -155,6 +164,11 @@ export const ROLES: RoleDefinition[] = [
       'financeManage',
       'reportsView',
       'busyView',
+      'labelsView',
+      'labelsManage',
+      'labelsReconcile',
+      'purchasesView',
+      'purchasesManage',
     ),
   },
   {
@@ -174,6 +188,9 @@ export const ROLES: RoleDefinition[] = [
       'financeManage',
       'reportsView',
       'busyView',
+      'labelsView',
+      'purchasesView',
+      'purchasesManage',
     ),
   },
 ]
@@ -189,6 +206,37 @@ export function roleDefinition(code: RoleCode): RoleDefinition {
 
 export function defaultPermissionsForRole(code: RoleCode): PermissionMap {
   return { ...roleDefinition(code).permissions }
+}
+
+/**
+ * Builds a complete permission map from the canonical `permissions` object or
+ * the legacy top-level flags used by older Firestore profiles.
+ *
+ * The canonical map is authoritative when present: missing keys stay false so
+ * a revoked permission cannot be resurrected by a stale top-level flag.
+ * Super Admins always receive every permission by role.
+ */
+export function normalizePermissionMap(
+  role: RoleCode,
+  storedPermissions?: unknown,
+  legacyFields?: Record<string, unknown>,
+): PermissionMap {
+  if (role === 'super_admin') return { ...ALL_PERMISSIONS }
+
+  const stored = (
+    storedPermissions
+    && typeof storedPermissions === 'object'
+    && !Array.isArray(storedPermissions)
+  )
+    ? storedPermissions as Record<string, unknown>
+    : null
+
+  const source = stored ?? legacyFields ?? {}
+  const map = { ...NONE }
+  for (const key of PERMISSION_KEYS) {
+    map[key] = source[key] === true
+  }
+  return map
 }
 
 export function isSuperAdmin(profile: UserProfile | null | undefined): boolean {

@@ -12,6 +12,8 @@ export type OperationErrorCode =
   | 'not-found'
   | 'already-exists'
   | 'failed-precondition'
+  | 'resource-exhausted'
+  | 'unavailable'
   | 'method-not-allowed'
   | 'unsupported-media-type'
   | 'payload-too-large'

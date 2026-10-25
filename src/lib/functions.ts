@@ -6,8 +6,11 @@ export type TrustedOperation =
   | 'recordOrderPayment'
   | 'recordBookingPayment'
   | 'adjustProductStock'
+  | 'enableProductStockTracking'
   | 'productionOperation'
   | 'inventoryOperation'
+  | 'labelOperation'
+  | 'purchaseOperation'
   | 'deliveryOperation'
   | 'financeOperation'
   | 'staffDirectory'
@@ -21,8 +24,11 @@ const ENDPOINTS: Record<TrustedOperation, string> = {
   recordOrderPayment: 'record-order-payment',
   recordBookingPayment: 'record-booking-payment',
   adjustProductStock: 'adjust-product-stock',
+  enableProductStockTracking: 'enable-product-stock-tracking',
   productionOperation: 'production-operation',
   inventoryOperation: 'inventory-operation',
+  labelOperation: 'label-operation',
+  purchaseOperation: 'purchase-operation',
   deliveryOperation: 'delivery-operation',
   financeOperation: 'finance-operation',
   staffDirectory: 'staff-directory',
@@ -37,15 +43,30 @@ function endpointBase(): string {
   return base.replace(/\/+$/, '')
 }
 
+export interface TrustedErrorDiagnostic {
+  source?: string
+  code?: string
+  indexUrl?: string
+}
+
 export class TrustedFunctionError extends Error {
   readonly code: string
   readonly status: number
+  readonly reference?: string
+  readonly diagnostic?: TrustedErrorDiagnostic
 
-  constructor(code: string, message: string, status: number) {
+  constructor(
+    code: string,
+    message: string,
+    status: number,
+    options: { reference?: string; diagnostic?: TrustedErrorDiagnostic } = {},
+  ) {
     super(message)
     this.name = 'TrustedFunctionError'
     this.code = code
     this.status = status
+    this.reference = options.reference
+    this.diagnostic = options.diagnostic
   }
 }
 
@@ -109,21 +130,45 @@ export async function callTrustedOperation<TInput, TOutput>(
 
   if (!response.ok) {
     const structured = payload as
-      | { error?: { code?: unknown; message?: unknown } }
+      | {
+          error?: {
+            code?: unknown
+            message?: unknown
+            reference?: unknown
+            diagnostic?: unknown
+          }
+        }
       | undefined
-    const code = typeof structured?.error?.code === 'string'
+    const structuredCode = typeof structured?.error?.code === 'string'
       ? structured.error.code
-      : 'internal'
+      : ''
+    const reference = typeof structured?.error?.reference === 'string'
+      ? structured.error.reference
+      : undefined
+    const diagnostic = structured?.error?.diagnostic
+      && typeof structured.error.diagnostic === 'object'
+      ? structured.error.diagnostic as TrustedErrorDiagnostic
+      : undefined
+
+    if (!structuredCode && response.status === 404) {
+      throw new TrustedFunctionError(
+        'endpoint-not-found',
+        'The trusted service endpoint was not found. If you are running locally, start the app with Netlify Dev (`npm run dev:netlify`). Otherwise ask an administrator to deploy the Netlify Functions.',
+        response.status,
+      )
+    }
+
+    const code = structuredCode || 'internal'
     const message = typeof structured?.error?.message === 'string'
       ? structured.error.message
       : 'The request could not be completed.'
-    throw new TrustedFunctionError(code, message, response.status)
+    throw new TrustedFunctionError(code, message, response.status, { reference, diagnostic })
   }
 
   if (payload === undefined) {
     throw new TrustedFunctionError(
-      'internal',
-      'The server returned an unreadable response.',
+      'invalid-response',
+      'The trusted service returned a response that could not be read. If you are running locally, make sure Netlify Dev is serving the functions.',
       response.status,
     )
   }

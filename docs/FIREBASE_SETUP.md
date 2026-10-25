@@ -1,10 +1,14 @@
 # Firebase setup — exact manual steps
 
+> **Simple explanation:** Firebase is the shop's record room. This guide opens the record room, switches on the lights, puts a gatekeeper at the door, and creates the first manager's key. The app cannot do these things by itself because they are owner-level actions, like opening a bank account.
+
 This application cannot create its own Firebase project, enable services, deploy rules or bootstrap its first administrator. Those are account-level actions and must be performed by the project owner. This guide lists every step in order.
 
 The supplied client configuration already points at the `vishal-prem` project, but a project name in an env file proves nothing. Verify each step in the Firebase console before entering real data.
 
 ## 1. Register the web app and copy the client config
+
+> **Simple explanation:** This gives the website the shop's public address in Firebase. These values are not passwords; they only say which record room to visit.
 
 1. Open <https://console.firebase.google.com/> and select the `vishal-prem` project.
 2. Project settings (gear icon) → **General** → *Your apps*.
@@ -30,6 +34,8 @@ Never commit a service-account JSON, Admin SDK private key or any `*-firebase-ad
 
 ## 2. Enable Email/Password authentication
 
+> **Simple explanation:** This is the staff login door. There is no public sign-up; a manager sends a one-time invitation, like giving a new employee a sealed joining letter.
+
 1. Build → **Authentication** → *Get started*.
 2. Sign-in method → **Email/Password** → Enable → Save.
 3. Leave anonymous, phone and social providers disabled unless a specific need appears.
@@ -38,6 +44,8 @@ Never commit a service-account JSON, Admin SDK private key or any `*-firebase-ad
 There is no public sign-up screen. Staff are created through single-use invitations from **Staff & permissions**.
 
 ## 3. Enable Firestore in Native mode
+
+> **Simple explanation:** Firestore is the main ledger cupboard. Choose Native mode, not the older Datastore mode. The region is like choosing which city's bank branch holds the records; it is hard to change later.
 
 1. Build → **Firestore Database** → *Create database*.
 2. Choose **Native mode** (not Datastore).
@@ -48,6 +56,8 @@ Realtime Database is **not** used by this application. If the project only has R
 
 ## 4. (Optional) Enable Storage for product images
 
+> **Simple explanation:** Storage is the photo cupboard for product pictures. It is optional. Do not put private documents there, because product photos are meant to be shown publicly.
+
 1. Build → **Storage** → *Get started*.
 2. Use the default bucket.
 3. Product photos are compressed in the browser to 1200 px JPEG before upload, maximum 8 MB source, stored under `product-images/{outletId}/{uuid}.jpg`.
@@ -57,6 +67,8 @@ If Storage is not enabled, product image upload will fail but the rest of the sy
 
 ## 5. Deploy rules, indexes and trusted Functions
 
+> **Simple explanation:** The rules are the gatekeeper's rulebook. The indexes are the quick-find registers. The Netlify Functions are the back-room staff who do the serious work. All three must be in place before the shop runs smoothly.
+
 Install and authenticate the Firebase CLI if needed:
 
 ```bash
@@ -65,12 +77,38 @@ firebase login
 firebase use vishal-prem
 ```
 
-Deploy the authoritative Firestore rules and indexes:
+Deploy the authoritative Firestore rules and indexes. `.firebaserc` already
+defaults to `vishal-prem`, but passing the project explicitly prevents a
+deployment against the wrong project:
 
 ```bash
-firebase deploy --only firestore:rules,firestore:indexes
-firebase deploy --only storage   # only if Storage is enabled
+firebase deploy --only firestore:rules --project vishal-prem
+firebase deploy --only firestore:indexes --project vishal-prem
+firebase deploy --only storage --project vishal-prem   # only if Storage is enabled
 ```
+
+The indexes in `firestore.indexes.json` are not active immediately. Open
+Firebase Console → Firestore Database → **Indexes** and wait until every
+composite index shows **READY**. An index that shows **Building** is not ready;
+queries can still fail during that window. `firebase firestore:indexes
+--project vishal-prem` also lists the deployed index state.
+
+Index creation requires `datastore.indexes.create`. A Firebase Admin SDK
+service-account key is not guaranteed to have that permission; if the deploy
+returns `403`, authenticate the CLI with a project Owner/Editor account and
+retry. Rules deployment uses a different permission and can succeed while
+index deployment is still blocked.
+
+The label event history query needs this composite index:
+
+```text
+labelEvents: jobId ASC, outletId ASC, occurredAt DESC
+```
+
+The department-scoped variant (`jobId`, `outletId`, `departmentId`,
+`occurredAt DESC`) and the label job list indexes are also in the file. If a
+screen says “This information is not ready yet” after a deployment, check the
+index status first, then confirm the deployed project is `vishal-prem`.
 
 The frontend's trusted order/payment/stock operations are **Netlify Functions**, not Firebase Functions. They are built and bundled by Netlify from `netlify/functions/` and need server-only Firebase Admin credentials in the Netlify Functions environment. See [DEPLOYMENT.md](DEPLOYMENT.md) and [FUNCTIONS.md](FUNCTIONS.md).
 
@@ -94,6 +132,8 @@ npm run emulators   # auth, firestore, functions, storage for legacy callables/r
 Index creation can take a few minutes. Composite queries used by the lists and reports will fail with a console link until the indexes finish building. The exact index definitions are in `firestore.indexes.json`.
 
 ## 6. Create the first Super Admin
+
+> **Simple explanation:** This is the first manager's key. It must be made by hand because no manager exists yet to invite one. After this, the manager invites everyone else from inside the app.
 
 This one profile must be created by hand or with the bootstrap script. Every later staff member is invited from inside the app. The full runbook, including the guarded `scripts/bootstrap-super-admin.mjs` procedure, is in [BOOTSTRAP_SUPER_ADMIN.md](BOOTSTRAP_SUPER_ADMIN.md).
 
@@ -157,6 +197,8 @@ If you see **“Account not linked to the workspace”**, the `users/{UID}` docu
 
 ## 8. Local emulator workflow
 
+> **Simple explanation:** The emulator is a practice shop on your own computer. You can create fake orders and fake staff without touching the real shop's records. When you close it, the practice data is usually gone.
+
 ```bash
 npm run emulators        # auth :9099, firestore :8080, functions :5001, storage :9199, UI :4000
 npm run seed:emulator    # creates a local workspace and super admin
@@ -172,11 +214,53 @@ VITE_FIRESTORE_EMULATOR_PORT=8080
 VITE_STORAGE_EMULATOR_PORT=9199
 ```
 
-The Firebase Emulator Suite does not run Netlify Functions. Endpoint tests start a local HTTP server in front of the Netlify handlers and connect it to the Auth/Firestore emulators. For frontend development against a separately running Functions server, set `VITE_FUNCTIONS_BASE_URL` to that server's function base URL; leave it unset for Netlify production.
+The Firebase Emulator Suite runs the legacy callables, but it does **not** run
+the Netlify Functions. Use Netlify Dev for the frontend so the real
+`/.netlify/functions/*` routes are served:
+
+```bash
+npm run dev   # Netlify Dev; open http://localhost:8888, not 5173
+```
+
+`npm run dev:vite` serves only the SPA. Trusted writes will return a 404 HTML
+page in that mode, which the UI now reports as a missing trusted endpoint
+instead of a generic `internal` error.
+
+To run the Netlify Functions against the Auth/Firestore emulators:
+
+```bash
+# Terminal 1
+npm run emulators:functions
+
+# Terminal 2
+FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099 \
+FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 \
+GCLOUD_PROJECT=vishal-prem \
+VITE_USE_FIREBASE_EMULATORS=true \
+npm run dev:netlify
+```
+
+Set `GCLOUD_PROJECT` to the same project id as `VITE_FIREBASE_PROJECT_ID`. For
+authenticated local calls against the real project instead of emulators,
+provide server-only `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL` and
+`FIREBASE_PRIVATE_KEY` (or `FIREBASE_SERVICE_ACCOUNT_JSON`). Never use a
+`VITE_*` prefix for these credentials.
+
+Verify the endpoint is really Netlify Dev, not Vite:
+
+```bash
+curl -i -X POST http://127.0.0.1:8888/.netlify/functions/label-operation \
+  -H 'Content-Type: application/json' -d '{}'
+```
+
+Expected: `401` with a JSON `unauthenticated` error. A `404` HTML response
+means you are on the SPA-only server.
 
 The seed script prints the local sign-in credentials when it finishes. Emulator data is local to your machine and is discarded when the emulator is shut down unless you use `--import`/`--export-on-exit`.
 
 ## 9. Troubleshooting
+
+> **Simple explanation:** Match the symptom in the left column to the plain cause and fix. Do not switch off the gatekeeper to "make it work"; that is like removing the shop's locks because a key is missing.
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
@@ -185,16 +269,24 @@ The seed script prints the local sign-in credentials when it finishes. Emulator 
 | “Account not linked to the workspace” | No `users/{uid}` document | Create it using the Auth UID as the document ID |
 | “Staff access is suspended” | `users/{uid}.active` is false | Set it to `true` from a Super Admin account |
 | `permission-denied` on lists | Role, outlet or department scope does not match the record | Check the profile's role, `outletIds` and `departmentIds` |
-| `unavailable` when saving an order or payment | Netlify Functions not deployed, or the local Functions server is not running | Deploy the Functions through the approved Netlify workflow, or point `VITE_FUNCTIONS_BASE_URL` at a local server |
+| A trusted function returns 200 and writes a record, but the next screen says `permission-denied` | The function writes through the Admin SDK and bypasses rules; the browser reads directly through the deployed Firestore rules, which may not include the latest collection matches | Deploy `firestore.rules` and `firestore.indexes.json` to `vishal-prem`; editing the local files does not change production until they are deployed |
+| `unavailable` when saving an order or payment | Netlify Functions not deployed, or the local Functions server is not running | Run `npm run dev` (Netlify Dev) and open port 8888, or deploy the Functions through the approved Netlify workflow |
+| Trusted endpoint returns a 404 HTML page | The SPA-only Vite server is running instead of Netlify Dev | Stop `npm run dev:vite`; use `npm run dev` / `npm run dev:netlify` and open <http://localhost:8888> |
+| `unauthenticated` (401) from a real function | The request reached the function, but Firebase ID-token verification/revocation failed | Set server-only `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL` and `FIREBASE_PRIVATE_KEY` (or `FIREBASE_SERVICE_ACCOUNT_JSON`), or run the browser and functions against the same emulator project; then sign in again |
+| `internal` with a reference such as `ERR-...` | An unexpected server failure was caught safely | Search the Netlify Functions log for the same reference; the response intentionally omits the stack and document contents |
 | `permission-denied` | Endpoint re-check failed for permission, origin or outlet/department scope | Check the live `users/{uid}` profile and allowed CORS origins; do not trust stale UI state |
-| `failed-precondition` | A business rule rejected the write (stock, legacy snapshots, overpayment) | Read the message shown in the form; refresh and reconcile if stock is involved |
-| Query fails with a console index link | Composite index still building | Wait, or deploy `firestore.indexes.json` |
+| `failed-precondition` with a stock/legacy message | A business rule rejected the write (stock, legacy snapshots, overpayment) | Read the message shown in the form; refresh and reconcile if stock is involved |
+| “This information is not ready yet” / “needs a one-time Firestore index” | A required composite index is missing or still building | Deploy `firestore.indexes.json` to `vishal-prem`, wait for **READY**, then retry |
+| Query fails with a console index link | Composite index still building or deployed to another project | Check Console → Firestore → Indexes; confirm the project id and wait for **READY** |
+| `failed-precondition` that is not about an index | The stored data is not in the required state, or a transaction was aborted | Reload and retry; if it continues, use the support reference and server log |
 | `auth/operation-not-allowed` | Email/Password provider disabled | Enable it in Authentication → Sign-in method |
 | Invite link says expired | Invite `expiresAtMillis` passed | Create a new invite |
 | Product image upload fails | Storage not enabled or rules not deployed | Enable Storage and deploy `storage.rules` |
 | Print output is misaligned | Browser/printer scaling, not an app setting | Adjust the printer driver; see the printing limits in the README |
 
 ## 10. What must never be done
+
+> **Simple explanation:** These are the shop's safety rules. Breaking them is like leaving the cash box open or giving the master key to a stranger.
 
 - Do not commit `.env.local`, service-account files or private keys.
 - Do not disable Firestore rules to “make it work”.

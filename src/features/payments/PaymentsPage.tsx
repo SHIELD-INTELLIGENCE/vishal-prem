@@ -178,6 +178,7 @@ export function PaymentsPage() {
         searchPlaceholder="Search receipt, customer, reference or note…"
         searchFields={(payment) => [payment.receiptNumber, payment.customerName, payment.reference, payment.notes, payment.mode]}
         exportFilename={`payments-${selectedOutlet?.code ?? 'outlet'}-${format(new Date(), 'yyyyMMdd')}.csv`}
+        exportDate={(payment) => payment.receivedAt}
         emptyTitle="No payments in this period"
         emptyDescription="Payments and advances recorded from orders and bookings appear here with printable receipts."
         emptyHelp="payments"

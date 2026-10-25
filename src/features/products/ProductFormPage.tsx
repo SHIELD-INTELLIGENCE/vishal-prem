@@ -34,6 +34,7 @@ function toValues(product: Product): ProductValues {
   return {
     name: product.name,
     alias: product.alias ?? '',
+    sku: product.sku ?? '',
     printName: product.printName,
     group: product.group,
     category: product.category,
@@ -116,6 +117,7 @@ export function ProductFormPage() {
     defaultValues: {
       name: '',
       alias: '',
+      sku: '',
       printName: '',
       group: '',
       category: '',
@@ -294,6 +296,14 @@ export function ProductFormPage() {
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
               <TextField label="Product name" required placeholder="Chocolate Truffle Cake" error={errors.name?.message} {...register('name')} />
               <TextField label="Alias / short name" placeholder="Truffle cake" error={errors.alias?.message} {...register('alias')} />
+              <TextField
+                label="SKU / barcode code (optional)"
+                placeholder="ALU-PAT-01"
+                maxLength={48}
+                hint="Used on item labels and barcodes. If blank, the product ID is encoded."
+                error={errors.sku?.message}
+                {...register('sku')}
+              />
               <TextField label="Print name" required placeholder="TRUFFLE CAKE" hint="Shown on kitchen and packing slips." error={errors.printName?.message} {...register('printName')} />
               <TextField label="Group" required placeholder="Cakes" error={errors.group?.message} {...register('group')} />
               <TextField label="Category" required placeholder="Celebration Cakes" error={errors.category?.message} {...register('category')} />
@@ -504,7 +514,7 @@ export function ProductFormPage() {
                   />
                 )}
                 <p className="rounded-xl border border-ink-200 bg-ivory-50/60 px-3.5 py-3 text-[11px] leading-relaxed text-ink-500">
-                  Stock quantity and opening balance are controlled by the separate <strong>Adjust stock</strong> action on the product page. Saving product details keeps the live balance. Stock tracking and the conversion factor are locked after creation so existing order snapshots and stock meaning cannot be changed by a metadata edit.
+                  Stock quantity and opening balance are controlled by the separate <strong>Adjust stock</strong> action on the product page. Saving product details keeps the live balance. Stock tracking is creation-only in this form; for an existing untracked product use <strong>Enable stock tracking</strong> on the product page, which records an explicit audited opening balance. The conversion factor is locked after creation so existing order snapshots and stock meaning cannot be changed by a metadata edit.
                 </p>
               </div>
             ) : canAdjustStock ? (

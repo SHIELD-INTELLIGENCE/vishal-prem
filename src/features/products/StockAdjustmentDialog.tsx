@@ -37,8 +37,21 @@ export function StockAdjustmentDialog({
 
   const currentStock = product.stockQty ?? 0
   const numericDelta = delta.trim() === '' ? Number.NaN : Number(delta)
-  const preview = Number.isFinite(numericDelta) ? currentStock + numericDelta : null
+  const preview = Number.isFinite(numericDelta)
+    ? Math.round((currentStock + numericDelta + Number.EPSILON) * 1_000_000) / 1_000_000
+    : null
   const direction = numericDelta > 0 ? 'add' : numericDelta < 0 ? 'remove' : ''
+
+  function clearBalance() {
+    if (currentStock <= 0) {
+      setError('This product is already at zero stock.')
+      return
+    }
+    // A stock adjustment is a signed change, not an absolute balance. Clearing
+    // the shelf is the delta that takes the live balance to exactly zero.
+    setDelta(String(-currentStock))
+    setError(null)
+  }
 
   async function submit() {
     if (busy) return
@@ -108,14 +121,27 @@ export function StockAdjustmentDialog({
               </p>
             </div>
           </div>
-          {preview !== null && preview !== currentStock && (
-            <div className="text-right">
-              <p className="text-[10px] font-bold uppercase tracking-wide text-ink-400">After adjustment</p>
-              <p className={`text-lg font-semibold tabular-nums ${preview < 0 ? 'text-brand-700' : 'text-sage-700'}`}>
-                {formatQuantity(preview, product.unit)}
-              </p>
-            </div>
-          )}
+          <div className="flex items-center gap-3">
+            {preview !== null && preview !== currentStock && (
+              <div className="text-right">
+                <p className="text-[10px] font-bold uppercase tracking-wide text-ink-400">After adjustment</p>
+                <p className={`text-lg font-semibold tabular-nums ${preview < 0 ? 'text-brand-700' : 'text-sage-700'}`}>
+                  {formatQuantity(preview, product.unit)}
+                </p>
+              </div>
+            )}
+            {currentStock > 0 && (
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={clearBalance}
+                disabled={busy}
+              >
+                Set to zero
+              </Button>
+            )}
+          </div>
         </div>
 
         <TextField
@@ -129,7 +155,7 @@ export function StockAdjustmentDialog({
             setDelta(event.target.value)
             setError(null)
           }}
-          hint="Use a positive number to add stock and a negative number to remove it."
+          hint="Use a positive number to add stock and a negative number to remove it. A zero balance is valid; use Set to zero to remove the whole balance."
           leftIcon={direction === 'add'
             ? <ArrowUp className="h-3.5 w-3.5" />
             : direction === 'remove'

@@ -340,6 +340,9 @@ async function seedBase(): Promise<void> {
     ['prod-last', { stockQty: 1, openingStock: 1 }],
     ['prod-meta', {}],
     ['prod-legacy', {}],
+    ['prod-untracked', {
+      trackStock: false,
+    }],
   ] as const) {
     batch.set(adminDb.doc(`products/${id}`), productPayload(id, overrides))
   }
@@ -757,6 +760,46 @@ describe('trusted stock adjustments', () => {
     expect(typeof adjustment?.createdAt).toBe('string')
   })
 
+  it('allows an adjustment that reduces the live balance to exactly zero', async () => {
+    const requestId = randomUUID()
+    const result = await callAs('storekeeper', 'adjustProductStock', {
+      requestId,
+      productId: 'prod-cake',
+      delta: -10,
+      reason: 'Physical count cleared the shelf',
+    })
+
+    expect(result).toMatchObject({
+      adjustmentId: requestId,
+      productId: 'prod-cake',
+      previousStockQty: 10,
+      resultingStockQty: 0,
+      unit: 'piece',
+    })
+    expect((await adminDb.doc('products/prod-cake').get()).data()?.stockQty).toBe(0)
+
+    const adjustment = (await adminDb.doc(`stockAdjustments/${requestId}`).get()).data()
+    expect(adjustment).toMatchObject({
+      delta: -10,
+      previousStockQty: 10,
+      resultingStockQty: 0,
+    })
+  })
+
+  it('rejects a zero-delta adjustment with a clear validation message', async () => {
+    await expectCallFailure(
+      callAs('storekeeper', 'adjustProductStock', {
+        requestId: randomUUID(),
+        productId: 'prod-cake',
+        delta: 0,
+        reason: 'No change',
+      }),
+      'invalid-argument',
+    )
+    expect((await adminDb.doc('products/prod-cake').get()).data()?.stockQty).toBe(10)
+    expect((await adminDb.collection('stockAdjustments').get()).empty).toBe(true)
+  })
+
   it('serialises concurrent adjustments instead of overwriting a balance', async () => {
     const [first, second] = await Promise.all([
       callAs('storekeeper', 'adjustProductStock', {
@@ -813,6 +856,119 @@ describe('trusted stock adjustments', () => {
       'not-found',
     )
     expect((await adminDb.doc(`stockAdjustments/${requestId}`).get()).exists).toBe(false)
+  })
+})
+
+describe('trusted stock-tracking conversion', () => {
+  it('denies actors without inventoryAdjust and actors outside outlet or department scope', async () => {
+    await expectCallFailure(
+      callAs('cake', 'enableProductStockTracking', {
+        requestId: randomUUID(),
+        productId: 'prod-untracked',
+        openingStock: 0,
+        reason: 'Enable stock control',
+      }),
+      'permission-denied',
+    )
+    await expectCallFailure(
+      callAs('storekeeper-o2', 'enableProductStockTracking', {
+        requestId: randomUUID(),
+        productId: 'prod-untracked',
+        openingStock: 0,
+        reason: 'Enable stock control',
+      }),
+      'permission-denied',
+    )
+    await expectCallFailure(
+      callAs('storekeeper-d2', 'enableProductStockTracking', {
+        requestId: randomUUID(),
+        productId: 'prod-untracked',
+        openingStock: 0,
+        reason: 'Enable stock control',
+      }),
+      'permission-denied',
+    )
+
+    expect((await adminDb.doc('products/prod-untracked').get()).data()?.trackStock).toBe(false)
+    expect(
+      (await adminDb.collection('stockAdjustments').where('source', '==', 'enable_tracking').get()).empty,
+    ).toBe(true)
+  })
+
+  it('rejects negative opening stock and an already tracked product', async () => {
+    await expectCallFailure(
+      callAs('storekeeper', 'enableProductStockTracking', {
+        requestId: randomUUID(),
+        productId: 'prod-untracked',
+        openingStock: -1,
+        reason: 'Enable stock control',
+      }),
+      'invalid-argument',
+    )
+    await expectCallFailure(
+      callAs('storekeeper', 'enableProductStockTracking', {
+        requestId: randomUUID(),
+        productId: 'prod-cake',
+        openingStock: 0,
+        reason: 'Enable stock control',
+      }),
+      'failed-precondition',
+    )
+
+    expect((await adminDb.doc('products/prod-untracked').get()).data()?.trackStock).toBe(false)
+    expect(
+      (await adminDb.collection('stockAdjustments').where('source', '==', 'enable_tracking').get()).empty,
+    ).toBe(true)
+  })
+
+  it('enables tracking with zero opening stock, writes an audit record, and retries idempotently', async () => {
+    const requestId = randomUUID()
+    const payload = {
+      requestId,
+      productId: 'prod-untracked',
+      openingStock: 0,
+      criticalStock: 2,
+      reason: 'Product should be stock-controlled; opening count verified',
+    }
+
+    const first = await callAs('storekeeper', 'enableProductStockTracking', payload)
+    expect(first).toMatchObject({
+      adjustmentId: requestId,
+      productId: 'prod-untracked',
+      previousStockQty: 0,
+      resultingStockQty: 0,
+      unit: 'piece',
+    })
+    expect((await adminDb.doc('products/prod-untracked').get()).data()).toMatchObject({
+      trackStock: true,
+      openingStock: 0,
+      stockQty: 0,
+      criticalStock: 2,
+      updatedBy: 'storekeeper',
+    })
+
+    const adjustment = (await adminDb.doc(`stockAdjustments/${requestId}`).get()).data()
+    expect(adjustment).toMatchObject({
+      id: requestId,
+      productId: 'prod-untracked',
+      delta: 0,
+      previousStockQty: 0,
+      resultingStockQty: 0,
+      source: 'enable_tracking',
+      createdBy: 'storekeeper',
+    })
+
+    const second = await callAs('storekeeper', 'enableProductStockTracking', payload)
+    expect(second.resultingStockQty).toBe(0)
+    expect(
+      (await adminDb.collection('stockAdjustments').where('source', '==', 'enable_tracking').get()).size,
+    ).toBe(1)
+
+    await expectCallFailure(
+      callAs('storekeeper', 'enableProductStockTracking', { ...payload, openingStock: 5 }),
+      'already-exists',
+    )
+    expect((await adminDb.doc('products/prod-untracked').get()).data()?.stockQty).toBe(0)
   })
 })
 

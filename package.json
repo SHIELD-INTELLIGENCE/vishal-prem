@@ -5,7 +5,9 @@
   "type": "module",
   "description": "Internal management system for Vishal Prem Bakery & Sweets",
   "scripts": {
-    "dev": "vite",
+    "dev": "netlify dev",
+    "dev:vite": "vite",
+    "dev:netlify": "netlify dev",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "lint": "eslint .",

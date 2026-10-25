@@ -168,6 +168,22 @@ beforeEach(async () => {
     }
 
     batch.set(doc(db, 'users', 'super'), user('super', 'super_admin', { outletIds: ['o1', 'o2'] }))
+    // Legacy profile shape: no canonical `permissions` map, only top-level flags.
+    batch.set(doc(db, 'users', 'legacy-super'), {
+      uid: 'legacy-super',
+      displayName: 'Legacy Super',
+      email: 'legacy-super@example.com',
+      role: 'super_admin',
+      outletIds: [''],
+      departmentIds: [''],
+      active: true,
+      createdAt: now,
+      updatedAt: now,
+      dashboardView: true,
+      labelsView: true,
+      labelsManage: true,
+      labelsReconcile: true,
+    })
     batch.set(doc(db, 'users', 'cake'), user('cake', 'cake_admin', { departmentIds: ['d1'] }))
     batch.set(doc(db, 'users', 'manager'), user('manager', 'manager', { departmentIds: [] }))
     batch.set(doc(db, 'users', 'finance'), user('finance', 'accountant', { departmentIds: [] }))
@@ -297,6 +313,62 @@ beforeEach(async () => {
       outletId: 'o1',
       sessionNumber: 'CASH-1',
       status: 'open',
+    })
+    batch.set(doc(db, 'labelPrintJobs', 'job-cake'), {
+      id: 'job-cake',
+      jobNumber: 'LBL-1',
+      jobType: 'item',
+      outletId: 'o1',
+      departmentId: 'd1',
+      status: 'printed',
+      reconciliationStatus: 'open',
+    })
+    batch.set(doc(db, 'labelPrintJobs', 'job-sweets'), {
+      id: 'job-sweets',
+      jobNumber: 'LBL-2',
+      jobType: 'item',
+      outletId: 'o1',
+      departmentId: 'd2',
+      status: 'printed',
+      reconciliationStatus: 'open',
+    })
+    batch.set(doc(db, 'labelPrintJobs', 'job-account'), {
+      id: 'job-account',
+      jobNumber: 'LBL-3',
+      jobType: 'account',
+      outletId: 'o1',
+      departmentId: '',
+      status: 'printed',
+      reconciliationStatus: 'open',
+    })
+    batch.set(doc(db, 'labelEvents', 'label-event-cake'), {
+      id: 'label-event-cake',
+      jobId: 'job-cake',
+      outletId: 'o1',
+      departmentId: 'd1',
+      kind: 'confirmed',
+    })
+    batch.set(doc(db, 'purchases', 'purchase-cake'), {
+      id: 'purchase-cake',
+      purchaseNumber: 'PUR-1',
+      outletId: 'o1',
+      departmentId: 'd1',
+      status: 'posted',
+    })
+    batch.set(doc(db, 'purchases', 'purchase-sweets'), {
+      id: 'purchase-sweets',
+      purchaseNumber: 'PUR-2',
+      outletId: 'o1',
+      departmentId: 'd2',
+      status: 'posted',
+    })
+    batch.set(doc(db, 'supplierPayments', 'supplier-payment-1'), {
+      id: 'supplier-payment-1',
+      paymentNumber: 'SPAY-1',
+      outletId: 'o1',
+      supplierId: 's1',
+      amountPaise: 1000,
+      status: 'posted',
     })
     await batch.commit()
   })
@@ -603,6 +675,58 @@ describe('operations, inventory, delivery and finance rules', () => {
     await assertFails(updateDoc(doc(finance, 'expenses', 'expense-1'), { amountPaise: 1 }))
     await assertFails(updateDoc(doc(finance, 'cashSessions', 'session-1'), { status: 'closed' }))
   })
+
+  it('scopes label jobs and events, keeping account labels outlet-wide', async () => {
+    const cake = firestoreFor('cake')
+    await assertSucceeds(getDoc(doc(cake, 'labelPrintJobs', 'job-cake')))
+    await assertSucceeds(getDoc(doc(cake, 'labelPrintJobs', 'job-account')))
+    await assertFails(getDoc(doc(cake, 'labelPrintJobs', 'job-sweets')))
+    await assertSucceeds(getDoc(doc(cake, 'labelEvents', 'label-event-cake')))
+    await assertFails(setDoc(doc(cake, 'labelPrintJobs', 'job-new'), {
+      id: 'job-new', jobNumber: 'LBL-NEW', jobType: 'item', outletId: 'o1', departmentId: 'd1', status: 'printed',
+    }))
+    await assertFails(updateDoc(doc(cake, 'labelPrintJobs', 'job-cake'), { status: 'closed' }))
+    await assertFails(setDoc(doc(cake, 'labelEvents', 'label-event-new'), {
+      id: 'label-event-new', jobId: 'job-cake', outletId: 'o1', departmentId: 'd1', kind: 'usage',
+    }))
+
+    const finance = firestoreFor('finance')
+    await assertSucceeds(getDoc(doc(finance, 'labelPrintJobs', 'job-sweets')))
+    await assertSucceeds(getDoc(doc(finance, 'labelPrintJobs', 'job-account')))
+  })
+
+  it('allows a legacy Super Admin profile without a permissions map to read labels', async () => {
+    const legacySuper = firestoreFor('legacy-super')
+
+    await assertSucceeds(getDoc(doc(legacySuper, 'labelPrintJobs', 'job-cake')))
+    await assertSucceeds(getDoc(doc(legacySuper, 'labelPrintJobs', 'job-account')))
+    await assertSucceeds(
+      getDocs(query(collection(legacySuper, 'labelPrintJobs'), where('outletId', '==', 'o1'))),
+    )
+    await assertSucceeds(getDoc(doc(legacySuper, 'labelEvents', 'label-event-cake')))
+  })
+
+  it('scopes purchases by department and supplier payments to outlet-wide staff', async () => {
+    const cake = firestoreFor('cake')
+    await assertSucceeds(getDoc(doc(cake, 'purchases', 'purchase-cake')))
+    await assertFails(getDoc(doc(cake, 'purchases', 'purchase-sweets')))
+    await assertFails(getDoc(doc(cake, 'supplierPayments', 'supplier-payment-1')))
+    await assertFails(setDoc(doc(cake, 'purchases', 'purchase-new'), {
+      id: 'purchase-new', purchaseNumber: 'PUR-NEW', outletId: 'o1', departmentId: 'd1', status: 'posted',
+    }))
+
+    const finance = firestoreFor('finance')
+    await assertSucceeds(getDoc(doc(finance, 'purchases', 'purchase-sweets')))
+    await assertSucceeds(getDoc(doc(finance, 'supplierPayments', 'supplier-payment-1')))
+    await assertFails(updateDoc(doc(finance, 'supplierPayments', 'supplier-payment-1'), { amountPaise: 1 }))
+    await assertFails(setDoc(doc(finance, 'supplierPayments', 'supplier-payment-new'), {
+      id: 'supplier-payment-new', paymentNumber: 'SPAY-NEW', outletId: 'o1', supplierId: 's1', amountPaise: 1,
+    }))
+
+    const inactive = firestoreFor('inactive')
+    await assertFails(getDoc(doc(inactive, 'labelPrintJobs', 'job-cake')))
+    await assertFails(getDoc(doc(inactive, 'purchases', 'purchase-cake')))
+  })
 })
 
 describe('query constraints mirror the rules', () => {
@@ -626,5 +750,87 @@ describe('query constraints mirror the rules', () => {
       query(collection(db, 'orders'), where('outletId', '==', 'o1'), where('departmentId', '==', 'd1')),
     )
     expect(snapshot.docs.map((item) => item.id)).toEqual(['order-cake'])
+  })
+
+  it('allows department-scoped label job and event list queries and denies broad lists', async () => {
+    const cake = firestoreFor('cake')
+
+    await assertSucceeds(
+      getDocs(
+        query(
+          collection(cake, 'labelPrintJobs'),
+          where('outletId', '==', 'o1'),
+          where('departmentId', '==', 'd1'),
+        ),
+      ),
+    )
+    await assertFails(getDocs(collection(cake, 'labelPrintJobs')))
+
+    await assertSucceeds(
+      getDocs(
+        query(
+          collection(cake, 'labelEvents'),
+          where('jobId', '==', 'job-cake'),
+          where('outletId', '==', 'o1'),
+          where('departmentId', '==', 'd1'),
+        ),
+      ),
+    )
+    await assertFails(getDocs(collection(cake, 'labelEvents')))
+  })
+
+  it('allows outlet-wide label history for outlet-wide roles', async () => {
+    const finance = firestoreFor('finance')
+    await assertSucceeds(
+      getDocs(
+        query(
+          collection(finance, 'labelPrintJobs'),
+          where('outletId', '==', 'o1'),
+        ),
+      ),
+    )
+    await assertSucceeds(
+      getDocs(
+        query(
+          collection(finance, 'labelEvents'),
+          where('jobId', '==', 'job-cake'),
+          where('outletId', '==', 'o1'),
+          orderBy('occurredAt', 'desc'),
+        ),
+      ),
+    )
+  })
+
+  it('allows scoped purchase lists and outlet-wide supplier payment lists', async () => {
+    const cake = firestoreFor('cake')
+    await assertSucceeds(
+      getDocs(
+        query(
+          collection(cake, 'purchases'),
+          where('outletId', '==', 'o1'),
+          where('departmentId', '==', 'd1'),
+        ),
+      ),
+    )
+    await assertFails(getDocs(collection(cake, 'purchases')))
+    await assertFails(getDocs(collection(cake, 'supplierPayments')))
+
+    const finance = firestoreFor('finance')
+    await assertSucceeds(
+      getDocs(
+        query(
+          collection(finance, 'purchases'),
+          where('outletId', '==', 'o1'),
+        ),
+      ),
+    )
+    await assertSucceeds(
+      getDocs(
+        query(
+          collection(finance, 'supplierPayments'),
+          where('outletId', '==', 'o1'),
+        ),
+      ),
+    )
   })
 })

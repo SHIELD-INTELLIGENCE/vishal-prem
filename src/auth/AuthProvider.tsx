@@ -21,6 +21,7 @@ import {
   type User,
 } from 'firebase/auth'
 import { doc, onSnapshot, updateDoc } from 'firebase/firestore'
+import { normalizePermissionMap } from '@/auth/permissions'
 import { auth, db, firebaseReady } from '@/lib/firebase'
 import { friendlyFirebaseError } from '@/lib/errors'
 import type { UserProfile } from '@/types/models'
@@ -98,6 +99,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               return
             }
             const data = { ...(snapshot.data() as UserProfile), uid: user.uid }
+            data.permissions = normalizePermissionMap(
+              data.role,
+              data.permissions,
+              data as unknown as Record<string, unknown>,
+            )
             setProfile(data)
             if (!data.active) {
               setStatus('suspended')

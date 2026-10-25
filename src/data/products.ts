@@ -40,6 +40,7 @@ function buildProductPayload({
     id,
     name: values.name.trim(),
     alias: values.alias?.trim() || '',
+    sku: values.sku?.trim() || '',
     printName: values.printName.trim(),
     group: values.group.trim(),
     category: values.category.trim(),

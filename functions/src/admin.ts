@@ -65,6 +65,13 @@ function createApp(): App {
     ?? process.env.FIREBASE_PROJECT_ID
     ?? serviceAccount?.projectId
 
+  // Safe one-time diagnostic: shows whether the function process actually
+  // received server-only credentials. It never logs the key or client email.
+  console.info('[trusted-operation] Firebase Admin credentials', {
+    projectId: projectId ?? 'unset',
+    source: serviceAccount ? 'service-account-env' : 'application-default',
+  })
+
   const options: AppOptions = {
     ...(projectId ? { projectId } : {}),
     ...(serviceAccount ? { credential: cert(serviceAccount) } : {}),

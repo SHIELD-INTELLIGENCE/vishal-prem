@@ -18,14 +18,22 @@ describe('toCsv', () => {
     expect(csv).toContain('"a\nb"')
   })
 
-  it('neutralises spreadsheet formula injection', () => {
+  it('neutralises spreadsheet formula injection without corrupting signed numbers', () => {
     const csv = toCsv(
-      [{ value: '=IMPORTXML("https://example.com")' }, { value: '+1' }, { value: '@cmd' }],
+      [
+        { value: '=IMPORTXML("https://example.com")' },
+        { value: '+91 98765 43210' },
+        { value: '@cmd' },
+        { value: '-5' },
+        { value: '+0.25' },
+      ],
       [{ header: 'Value', value: (row) => row.value }],
     )
     expect(csv).toContain("'=IMPORTXML")
-    expect(csv).toContain("'+1")
+    expect(csv).toContain("'+91 98765 43210")
     expect(csv).toContain("'@cmd")
+    expect(csv).toContain('\r\n-5')
+    expect(csv).toContain('\r\n+0.25')
   })
 
   it('renders booleans and blank values predictably', () => {

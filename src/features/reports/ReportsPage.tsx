@@ -30,7 +30,7 @@ import type { Booking, Order, Payment } from '@/types/models'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
-import { EmptyState, Skeleton } from '@/components/ui/States'
+import { EmptyState, ErrorState, Skeleton } from '@/components/ui/States'
 import { formatDate, formatINR, todayInput } from '@/lib/format'
 import { ORDER_STATUS_LABELS } from '@/lib/calculations'
 import { downloadCsv } from '@/lib/csv'
@@ -45,8 +45,23 @@ export function ReportsPage() {
   const [from, setFrom] = useState(format(subDays(new Date(), 29), 'yyyy-MM-dd'))
   const [to, setTo] = useState(todayInput())
 
-  const effectiveFrom = range === '7d' ? subDays(new Date(), 6) : range === '30d' ? subDays(new Date(), 29) : range === '90d' ? subDays(new Date(), 89) : range === 'month' ? startOfDay(new Date(new Date().getFullYear(), new Date().getMonth(), 1)) : startOfDay(parseISO(from))
-  const effectiveTo = range === 'custom' ? endOfDay(parseISO(to)) : endOfDay(new Date())
+  // Keep the query window stable across renders. Rebuilding `new Date()` on
+  // every render changes the ISO dependency and re-subscribes the listeners
+  // continuously, which leaves loading widgets spinning forever.
+  const { effectiveFrom, effectiveTo } = useMemo(() => {
+    const now = new Date()
+    const start = range === '7d'
+      ? subDays(now, 6)
+      : range === '30d'
+        ? subDays(now, 29)
+        : range === '90d'
+          ? subDays(now, 89)
+          : range === 'month'
+            ? startOfDay(new Date(now.getFullYear(), now.getMonth(), 1))
+            : startOfDay(parseISO(from))
+    const end = range === 'custom' ? endOfDay(parseISO(to)) : endOfDay(now)
+    return { effectiveFrom: start, effectiveTo: end }
+  }, [range, from, to])
   const startIso = effectiveFrom.toISOString()
   const endIso = effectiveTo.toISOString()
   const outletId = selectedOutletId ?? ''
@@ -66,6 +81,8 @@ export function ReportsPage() {
     [profile?.uid, outletId, profile?.role, profile?.departmentIds.join(','), startIso, endIso],
     Boolean(profile && outletId),
   )
+
+  const dailySalesError = orders.error ?? bookings.error
 
   const metrics = useMemo(() => {
     const activeOrders = orders.rows.filter((order) => order.status !== 'cancelled')
@@ -292,6 +309,12 @@ export function ReportsPage() {
         </div>
       </section>
 
+      {payments.error && (
+        <p className="rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-xs leading-relaxed text-brand-800" role="alert">
+          Payment totals could not load. {payments.error}
+        </p>
+      )}
+
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {[
           { label: 'Sales value', value: formatINR(metrics.sales), hint: `${metrics.orderCount} orders & bookings`, icon: <IndianRupee className="h-4 w-4" />, tone: 'brand' as const },
@@ -319,7 +342,17 @@ export function ReportsPage() {
             </div>
             <BarChart3 className="h-5 w-5 text-ink-300" />
           </div>
-          {orders.loading ? (
+          {dailySalesError ? (
+            <ErrorState
+              title="Daily sales could not load"
+              message={dailySalesError}
+              onRetry={() => {
+                orders.reload()
+                bookings.reload()
+              }}
+              help="reports"
+            />
+          ) : orders.loading || bookings.loading ? (
             <Skeleton className="mt-4 h-[260px] w-full" />
           ) : metrics.days.every((day) => day.sales === 0) ? (
             <EmptyState compact title="No sales in this period" description="Orders in the selected date range will appear here." />

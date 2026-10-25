@@ -1,8 +1,10 @@
+import { randomUUID } from 'node:crypto'
 import { DomainError } from '../../../src/lib/domainErrors'
 import type { UserProfile } from '../../../src/types/models'
 import { getAdminAuth } from '../admin'
 import { requireActorByUid } from '../backend/context'
 import { OperationError, type OperationErrorCode } from '../backend/errors'
+import { classifyFirebaseError } from '../backend/firebaseErrorMapping'
 import { authenticateRequest } from './token'
 
 const MAX_BODY_BYTES = 256 * 1024
@@ -14,6 +16,8 @@ const STATUS: Record<OperationErrorCode, number> = {
   'not-found': 404,
   'already-exists': 409,
   'failed-precondition': 412,
+  'resource-exhausted': 429,
+  'unavailable': 503,
   'method-not-allowed': 405,
   'unsupported-media-type': 415,
   'payload-too-large': 413,
@@ -103,7 +107,11 @@ function jsonResponse(
   return new Response(JSON.stringify(body), { status, headers })
 }
 
-function errorResponse(error: unknown, cors: CorsResult): Response {
+function newReference(): string {
+  return `ERR-${randomUUID().slice(0, 8).toUpperCase()}`
+}
+
+function errorResponse(error: unknown, cors: CorsResult, path: string): Response {
   if (error instanceof OperationError) {
     return jsonResponse(
       { error: { code: error.code, message: error.message } },
@@ -120,14 +128,48 @@ function errorResponse(error: unknown, cors: CorsResult): Response {
     )
   }
 
+  const reference = newReference()
+  const classified = classifyFirebaseError(error)
+  if (classified) {
+    // The diagnostic is safe to keep server-side: Firestore index messages can
+    // contain collection names and a console URL, never credentials or tokens.
+    console.error('[trusted-operation] infrastructure failure', {
+      reference,
+      path,
+      code: classified.diagnostic?.code ?? 'unknown',
+      source: classified.diagnostic?.source ?? 'unknown',
+      indexUrl: classified.diagnostic?.indexUrl,
+      message: error instanceof Error ? error.message : undefined,
+    })
+    return jsonResponse(
+      {
+        error: {
+          code: classified.code,
+          message: classified.message,
+          reference,
+          ...(classified.diagnostic ? { diagnostic: classified.diagnostic } : {}),
+        },
+      },
+      STATUS[classified.code],
+      cors,
+    )
+  }
+
   // Server-side logging is allowed to include the stack. The client receives
-  // only a generic message with no Firestore path, token or credential data.
-  console.error('Unhandled trusted operation error', error)
+  // only a generic message with a support reference, never a Firestore path,
+  // token or credential value.
+  console.error('[trusted-operation] unhandled failure', {
+    reference,
+    path,
+    message: error instanceof Error ? error.message : undefined,
+    stack: error instanceof Error ? error.stack : undefined,
+  })
   return jsonResponse(
     {
       error: {
         code: 'internal',
         message: 'The request could not be completed.',
+        reference,
       },
     },
     STATUS.internal,
@@ -205,6 +247,6 @@ export async function handleTrustedEndpoint<TInput, TOutput>(
     const result = await options.run(profile, input)
     return jsonResponse(result, 200, cors)
   } catch (error) {
-    return errorResponse(error, cors)
+    return errorResponse(error, cors, new URL(request.url).pathname)
   }
 }

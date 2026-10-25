@@ -2,8 +2,9 @@ import {
   canAccessDepartment,
   canAccessOutlet,
   hasPermission,
+  normalizePermissionMap,
 } from '../../../src/auth/permissions'
-import type { PermissionKey, UserProfile } from '../../../src/types/models'
+import type { PermissionKey, RoleCode, UserProfile } from '../../../src/types/models'
 import { getAdminDb } from '../admin'
 import { OperationError } from './errors'
 
@@ -26,12 +27,10 @@ export async function requireActorByUid(uid: string): Promise<UserProfile> {
     throw new OperationError('permission-denied', 'Your staff profile is not available.')
   }
 
-  const raw = snapshot.data() as Partial<UserProfile>
+  const raw = snapshot.data() as Partial<UserProfile> & Record<string, unknown>
   if (
     raw.active !== true
     || typeof raw.role !== 'string'
-    || typeof raw.permissions !== 'object'
-    || raw.permissions === null
     || !isStringArray(raw.outletIds)
     || !isStringArray(raw.departmentIds)
   ) {
@@ -41,7 +40,13 @@ export async function requireActorByUid(uid: string): Promise<UserProfile> {
     )
   }
 
-  return { ...(raw as UserProfile), uid }
+  const role = raw.role as RoleCode
+  return {
+    ...(raw as UserProfile),
+    uid,
+    role,
+    permissions: normalizePermissionMap(role, raw.permissions, raw),
+  }
 }
 
 export function requirePermission(profile: UserProfile, permission: PermissionKey): void {

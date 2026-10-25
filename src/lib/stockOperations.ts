@@ -8,7 +8,10 @@ const MAX_STOCK_QUANTITY = 1_000_000
  * introducing a separate ledger or unit system.
  */
 function roundQuantity(value: number): number {
-  return Math.round((value + Number.EPSILON) * 1_000_000) / 1_000_000
+  const rounded = Math.round((value + Number.EPSILON) * 1_000_000) / 1_000_000
+  // Firestore and JSON treat -0 and 0 as equal, but the UI and audit trail
+  // should never show a signed zero balance.
+  return Object.is(rounded, -0) ? 0 : rounded
 }
 
 export interface StockAdjustmentResult {
@@ -69,6 +72,7 @@ export function buildStockAdjustment({
   previousStockQty,
   resultingStockQty,
   now,
+  source = 'manual',
 }: {
   product: Product
   profile: UserProfile
@@ -78,6 +82,7 @@ export function buildStockAdjustment({
   previousStockQty: number
   resultingStockQty: number
   now: string
+  source?: StockAdjustment['source']
 }): StockAdjustment {
   return {
     id: adjustmentId,
@@ -91,7 +96,7 @@ export function buildStockAdjustment({
     resultingStockQty: roundQuantity(resultingStockQty),
     reason: reason.trim(),
     actorName: profile.displayName?.trim() || profile.email || profile.uid,
-    source: 'manual',
+    source,
     createdAt: now,
     updatedAt: now,
     createdBy: profile.uid,

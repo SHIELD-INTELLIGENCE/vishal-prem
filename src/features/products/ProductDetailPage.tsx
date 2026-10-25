@@ -27,6 +27,7 @@ import { ErrorState, Skeleton } from '@/components/ui/States'
 import { formatDateTime, formatINR, formatQuantity, titleCase } from '@/lib/format'
 import { friendlyFirebaseError } from '@/lib/errors'
 import { StockAdjustmentDialog } from './StockAdjustmentDialog'
+import { EnableStockTrackingDialog } from './EnableStockTrackingDialog'
 
 const PRICING_LABELS: Record<Product['pricingMode'], string> = {
   fixed: 'Fixed price',
@@ -44,6 +45,7 @@ export function ProductDetailPage() {
   const [busy, setBusy] = useState(false)
   const [imageFailed, setImageFailed] = useState(false)
   const [adjustOpen, setAdjustOpen] = useState(false)
+  const [enableStockOpen, setEnableStockOpen] = useState(false)
 
   useEffect(() => {
     setImageFailed(false)
@@ -103,6 +105,17 @@ export function ProductDetailPage() {
                 Adjust stock
               </Button>
             )}
+            {canAdjustStock && !product.trackStock && (
+              <Button
+                variant="outline"
+                size="sm"
+                leftIcon={<Warehouse className="h-3.5 w-3.5" />}
+                onClick={() => setEnableStockOpen(true)}
+                disabled={busy}
+              >
+                Enable stock tracking
+              </Button>
+            )}
             {canManage && (
               <Button asChild variant="outline" size="sm" leftIcon={<Edit3 className="h-3.5 w-3.5" />}>
                 <Link to={`/admin/products/${product.id}/edit`}>Edit product</Link>
@@ -153,6 +166,7 @@ export function ProductDetailPage() {
                 <h2 className="font-display text-lg font-semibold">Catalogue details</h2>
                 <dl className="mt-3 grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
                   <div><dt className="text-[11px] font-semibold uppercase tracking-wide text-ink-400">Print name</dt><dd className="font-medium">{product.printName}</dd></div>
+                  <div><dt className="text-[11px] font-semibold uppercase tracking-wide text-ink-400">SKU / barcode</dt><dd className="font-mono text-xs">{product.sku || product.id}</dd></div>
                   <div><dt className="text-[11px] font-semibold uppercase tracking-wide text-ink-400">Department</dt><dd className="font-medium">{department?.name ?? '—'}</dd></div>
                   <div><dt className="text-[11px] font-semibold uppercase tracking-wide text-ink-400">Group</dt><dd className="font-medium">{product.group}</dd></div>
                   <div><dt className="text-[11px] font-semibold uppercase tracking-wide text-ink-400">Category</dt><dd className="font-medium">{product.category}</dd></div>
@@ -257,6 +271,15 @@ export function ProductDetailPage() {
           onOpenChange={setAdjustOpen}
           product={product}
           onAdjusted={() => state.reload()}
+        />
+      )}
+
+      {canAdjustStock && !product.trackStock && (
+        <EnableStockTrackingDialog
+          open={enableStockOpen}
+          onOpenChange={setEnableStockOpen}
+          product={product}
+          onEnabled={() => state.reload()}
         />
       )}
     </div>

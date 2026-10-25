@@ -2,6 +2,7 @@ import { HttpsError } from 'firebase-functions/v2/https'
 import { logger } from 'firebase-functions/logger'
 import { DomainError } from '../../src/lib/domainErrors'
 import { OperationError, type OperationErrorCode } from './backend/errors'
+import { classifyFirebaseError } from './backend/firebaseErrorMapping'
 
 const HTTPS_CODES: Record<
   OperationErrorCode,
@@ -13,6 +14,8 @@ const HTTPS_CODES: Record<
   'not-found': 'not-found',
   'already-exists': 'already-exists',
   'failed-precondition': 'failed-precondition',
+  'resource-exhausted': 'resource-exhausted',
+  'unavailable': 'unavailable',
   'method-not-allowed': 'invalid-argument',
   'unsupported-media-type': 'invalid-argument',
   'payload-too-large': 'invalid-argument',
@@ -32,6 +35,19 @@ export function throwHttpsError(error: unknown): never {
   }
   if (error instanceof DomainError) {
     throw new HttpsError('failed-precondition', error.message)
+  }
+  const classified = classifyFirebaseError(error)
+  if (classified) {
+    logger.error('Classified callable infrastructure error', {
+      code: classified.diagnostic?.code,
+      source: classified.diagnostic?.source,
+      indexUrl: classified.diagnostic?.indexUrl,
+    })
+    throw new HttpsError(
+      HTTPS_CODES[classified.code],
+      classified.message,
+      classified.diagnostic ? { diagnostic: classified.diagnostic } : undefined,
+    )
   }
   logger.error('Unhandled callable error', error)
   throw new HttpsError('internal', 'The request could not be completed.')

@@ -1,18 +1,42 @@
 # Vishal Prem Bakery & Sweets — Management System
 
+> **Simple explanation:** Think of this as the shop's digital register. The counter staff write orders, the kitchen sees what to make, the store sees what is left, and the owner sees the money and reports. The public website is at `/`; the staff-only workspace is at `/admin`. It is **not** connected to BUSY.
+
 Internal management system for two outlets, four production departments and the people who run them. The private workspace lives under `/admin`; the root path `/` is reserved for the public website. This is not connected to BUSY.
+
+## The short version
+
+| What you want to do | Where it happens |
+| --- | --- |
+| Take a counter order | Orders |
+| Take a party booking | Bookings |
+| See what the kitchen must make | Production |
+| Check raw material, packing or finished stock | Inventory |
+| Print price/barcode labels or customer account labels | Labels |
+| Record a purchase bill from a supplier | Purchases |
+| Send a delivery | Deliveries |
+| See udhaar, expenses and cash in the drawer | Finance |
+| See sales, tax estimate and CSV reports | Reports |
+| Add staff, outlets or departments | Staff & permissions, Outlets, Departments |
+| Change shop settings | Settings |
+
+The detailed sections below are for the person who runs or maintains the system. The exact commands are kept exactly as they are so nobody has to guess.
 
 - Cake, Sweets, Hot Section and Gajak departments
 - Counter orders with preparation lifecycle
 - Party bookings with trusted creation/editing, advances, balances, production and packing status
 - Customer and party accounts without intrusive identity collection
-- Products with fixed, per-kg, per-box and cake-pound pricing
+- Products with fixed, per-kg, per-box and cake-pound pricing, optional SKU/barcode code, and one canonical catalogue record shared by orders, purchasing, inventory and labels
+- Trusted stock-tracking conversion for existing products, with an explicit audited opening balance (zero allowed)
 - Department production queues with partial completion and quality history
 - Raw-material, packaging and finished-product stock ledgers per outlet and department
 - Delivery assignment, dispatch, outcomes, returns and door collections
 - Party statements, outstanding reminders, expenses and cash-session reconciliation
 - Cash/UPI/card payments and refunds
-- Reports and filtered CSV exports across sales, production, inventory, delivery, finance and parties
+- Reports and filtered CSV exports across sales, production, inventory, delivery, finance and parties, with a reusable date-range and column-selection dialog
+- Inventory-balance, production, item/party analysis and GST working reports built only from persisted documents
+- Print jobs for item/barcode and account labels with MRP, unit, batch/lot, manufacturing/expiry dates, confirmation, reprint events and applied/damaged/returned reconciliation
+- GST-aware purchase vouchers, supplier ledgers, supplier payments and stock receipts
 - Printable receipts, kitchen tickets, packing slips, quotations, confirmations, invoices and payment receipts
 - Role, outlet and department authorization enforced in Firestore rules
 - Static Vite build suitable for Netlify and future Capacitor packaging
@@ -34,6 +58,7 @@ Internal management system for two outlets, four production departments and the 
 - npm
 - A Firebase project (the supplied client config targets `vishal-prem`)
 - Firebase CLI for rules/index deployment and emulators
+- Netlify CLI for `npm run dev` (Netlify Dev serves the SPA and the real Netlify Functions together)
 - Java 21 or newer for the Firestore emulator
 
 ## Quick start
@@ -44,6 +69,22 @@ cp .env.example .env.local
 # fill the six VITE_FIREBASE_* values, then:
 npm run dev
 ```
+
+`npm run dev` starts **Netlify Dev**, which serves the Vite SPA and the real
+`/.netlify/functions/*` endpoints from one origin at <http://localhost:8888>.
+Use that URL for the app. `npm run dev:vite` is the SPA-only fallback; trusted
+writes will return a 404 there because Vite does not run Netlify Functions.
+
+If the Netlify CLI is not installed:
+
+```bash
+npm install -g netlify-cli
+```
+
+Authenticated local functions need server-only Firebase Admin credentials
+(`FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY` or
+`FIREBASE_SERVICE_ACCOUNT_JSON`). Never put them in a `VITE_*` variable. The
+emulator workflow is in [docs/FUNCTIONS.md](docs/FUNCTIONS.md#local-development).
 
 Before the app can hold data, the Firebase project must have:
 
@@ -69,6 +110,9 @@ The public website owns `/`. Every management screen, including sign-in and firs
 | `/admin/payments` | Payments and refunds |
 | `/admin/production` | Department production queue |
 | `/admin/inventory` | Raw-material, packaging and finished-stock ledger |
+| `/admin/labels/items`, `/admin/labels/accounts` | Item/barcode and account label print setup |
+| `/admin/labels/usage`, `/admin/labels/reconciliation` | Physical label usage and printed-versus-accounted reconciliation |
+| `/admin/purchases`, `/admin/purchases/new` | GST purchase vouchers, supplier balances and supplier payments |
 | `/admin/deliveries` | Delivery assignment, dispatch and closing |
 | `/admin/finance` | Party statements, expenses and cash sessions |
 | `/admin/customers`, `/admin/customers/new`, `/admin/customers/:id` | Customer and party accounts |
@@ -77,6 +121,7 @@ The public website owns `/`. Every management screen, including sign-in and firs
 | `/admin/outlets` | Outlet locations |
 | `/admin/users` | Staff, roles and invitations |
 | `/admin/reports` | Reports and exports |
+| `/admin/reports/business` | Inventory, production, item/party analysis and GST working reports |
 | `/admin/busy` | Accounting CSV export |
 | `/admin/settings` | Business and system settings |
 | `/admin/help` | Help centre |
@@ -89,7 +134,9 @@ Every `/admin` route except the sign-in, password-reset and invitation screens r
 
 | Command | Purpose |
 | --- | --- |
-| `npm run dev` | Vite development server |
+| `npm run dev` | Netlify Dev: Vite SPA plus real `/.netlify/functions/*` on port 8888 |
+| `npm run dev:netlify` | Explicit alias for `netlify dev` |
+| `npm run dev:vite` | Vite SPA only; Netlify Functions are **not** served |
 | `npm run build` | Type-check and produce `dist/` |
 | `npm run preview` | Preview the production build |
 | `npm run lint` | ESLint flat config across the repository |
@@ -140,6 +187,8 @@ storage.rules    Product image write restrictions
 
 Managers and accountants are deliberately department-wide inside their assigned outlets, matching their operating responsibility. Department admins remain tightly scoped. All access is evaluated from the signed-in user's `users/{uid}` document in Firestore rules, and the trusted Netlify Functions re-check the live profile, permission, outlet and department scope server-side after verifying the Firebase ID token. Client arguments are never trusted for role or scope. `inventoryAdjust` is separate from `productsManage` and is not granted to ordinary catalogue roles by default.
 
+Label printing uses `labelsView`, `labelsManage` (create, confirm, reprint and record usage) and `labelsReconcile` (close, reopen and correct with a reason). Purchases use `purchasesView` and `purchasesManage`; supplier payments additionally require `financeManage`. Department operators can print and post purchases for their own department but cannot reconcile label jobs or manage outlet-level supplier payments.
+
 Detailed threat model and limits: [docs/SECURITY.md](docs/SECURITY.md). Trusted operations and endpoint contracts: [docs/FUNCTIONS.md](docs/FUNCTIONS.md).
 
 ## Money, dates and records
@@ -177,17 +226,17 @@ BUSY is **not connected**. The `/admin/busy` page exports dated CSV files for or
 | Check | Result |
 | --- | --- |
 | `npx tsc --noEmit` | Pass |
-| `npm test` | 305 unit tests pass (includes public/admin route tests, Help content and Help centre interaction tests, and mocked token error mapping) |
+| `npm test` | 417 unit tests pass (includes stock-to-zero and stock invariant tests, trusted-endpoint 404/structured-error handling, legacy profile permission normalization, canonical product identity/visibility, CSV date-range/column/export validation, label, GST, inventory, analysis and GST-report domain tests, public/admin route tests, Help content and Help-centre interaction tests, error classification and mocked token error mapping) |
 | `npm run lint` | Pass, no warnings |
 | `npm run build` | Pass; production bundle emits a chunk-size advisory |
 | `npm run functions:build` | Pass |
-| Firestore rules emulator | 92 tests pass against the real `firestore.rules` |
-| Functions emulator | 61 callable/endpoint tests pass against real Auth, Firestore and Functions emulators, including a local HTTP server in front of the Netlify handlers |
-| Storage rules emulator | 13 tests pass against the real `storage.rules` |
+| Firestore and Storage rules emulator | 111 tests pass against the real `firestore.rules` and `storage.rules`, including label job/event, purchase and supplier-payment list-query scope and legacy Super Admin profiles without a stored permission map |
+| Functions emulator | 75 callable/endpoint tests pass against real Auth, Firestore and Functions emulators, including stock-to-zero, legacy Super Admin authorization, label authentication/validation, label batch/date validation, product stock-tracking conversion, purchase lifecycles and a local HTTP server in front of the Netlify handlers |
+| Netlify Dev endpoint smoke test | `POST http://127.0.0.1:8888/.netlify/functions/label-operation` returns `401` JSON for an unauthenticated request, proving the real endpoint is served instead of Vite's HTML 404 |
 | Physical printer | Not tested |
-| Real Firebase project flows | Blocked until Firestore, trusted Functions, credentials and the first admin are configured |
+| Real Firebase project flows | Firestore rules deployed to `vishal-prem` on 2026-10-25; composite indexes still need deployment by a project owner/editor because the local service account lacks `datastore.indexes.create` |
 
-The build is verified as a static SPA plus Firebase Functions/Netlify Function source and tests. Neither the SPA nor Functions/rules has been deployed to Netlify or Firebase from this workspace, and no claim is made that those hosting/account steps have been completed. The existing `dist/` drag-and-drop cannot publish Netlify Functions; see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the required approval gate.
+The build is verified as a static SPA plus Firebase Functions/Netlify Function source and tests. The SPA and trusted Functions have not been deployed to Netlify. The Firestore rules were deployed to `vishal-prem` on 2026-10-25, but the composite indexes in `firestore.indexes.json` still require deployment by a project owner/editor. The existing `dist/` drag-and-drop cannot publish Netlify Functions; see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the required approval gate.
 
 ## Deployment
 

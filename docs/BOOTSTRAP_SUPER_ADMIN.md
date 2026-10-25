@@ -1,28 +1,34 @@
 # Bootstrapping the first Super Admin
 
+> **Simple explanation:** A new shop has no manager yet. The system only lets an existing manager create staff, and it only lets an invited person join. So the **first** manager has to be entered by hand, once, by the owner. After that, every other staff member is invited from inside the app.
+
 This runbook creates the **first** Super Admin profile in a real Firebase project.
 It is a one-time, owner-run procedure. After it succeeds, every later staff
 member is invited from inside the app.
 
 ## Why a manual bootstrap is required
 
-`firestore.rules` authorizes every read and write from the caller's own
-`users/{uid}` document:
+Think of `firestore.rules` as the gatekeeper. For every request, the gatekeeper
+looks at the caller's own `users/{uid}` card:
 
-- `isActive()` reads `users/{request.auth.uid}`;
-- `isSuper()` / `hasPerm()` read the same document.
+- `isActive()` checks whether the card exists and is switched on;
+- `isSuper()` / `hasPerm()` check the role and permissions on that card.
 
-On a new project there is no `users/{uid}` document. The Firestore `users` create rule
-therefore only allows:
+On a brand-new project, nobody has a card yet. The `users` create rule only allows:
 
 1. an existing Super Admin (`usersManage`), or
-2. a self-service signup bound to a valid, pending invitation.
+2. a person joining with a valid, unused invitation.
 
-Neither can happen yet, so the first Super Admin must be created out-of-band.
-The app has no code path that can self-grant Super Admin, and this procedure
-does not add one.
+Both of those need a first manager who does not exist yet. That is why the first
+Super Admin must be created outside the app. The app has no hidden button that
+makes someone Super Admin, and this procedure does not add one.
 
-## Prerequisites
+## What you need before starting
+
+In plain words: the shop's Firebase project must be open, the owner must already
+have a login account, and you need the service-account key file that lets the
+script talk to Firebase. Keep that key file outside the project folder, like you
+would keep the shop's bank key outside the cash box.
 
 1. **Firestore enabled** — Firebase Console → Build → Firestore Database →
    Create database → **Native mode**.
@@ -37,6 +43,8 @@ does not add one.
    outside the repository, for example `/secure/vishal-prem-sa.json`.
 
 ## Option A — guided script (recommended)
+
+> **Simple explanation:** This is like a trusted accountant coming to your shop with a sealed letter. The script runs only on your computer, checks the owner's login, and writes the first manager card. It never asks for or stores the owner's password.
 
 The script uses the Admin SDK in a trusted local process. It never ships to the
 browser and never holds a password.
@@ -83,6 +91,8 @@ Useful flags:
   before reporting success.
 
 ## Option B — Firebase Console (no tooling)
+
+> **Simple explanation:** If you do not want to run a script, you can type the first manager's card by hand in the Firebase Console. This is slower and easier to mistype, so copy the UID and email carefully.
 
 1. Firebase Console → Firestore Database → Data.
 2. Create collection `users`, document id = the Auth **UID** (no slashes).

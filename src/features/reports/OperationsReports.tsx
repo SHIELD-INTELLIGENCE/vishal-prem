@@ -207,6 +207,9 @@ export function OperationsReports({
           searchPlaceholder="Search product, source or status…"
           searchFields={(task) => [task.productName, task.sourceNumber, task.status, task.qualityStatus]}
           exportFilename={`production-report-${format(parseISO(from), 'yyyyMMdd')}-${format(parseISO(to), 'yyyyMMdd')}.csv`}
+          exportDate={(task) => task.dueAt}
+          exportInitialFrom={from}
+          exportInitialTo={to}
           initialSort={{ key: 'due', direction: 'asc' }}
           emptyTitle="No production work in this period"
           emptyDescription="Production tasks due in the selected date range appear here."
@@ -225,6 +228,9 @@ export function OperationsReports({
           searchPlaceholder="Search item, reason or staff…"
           searchFields={(movement) => [movement.itemName, movement.reason, movement.type, movement.actorName]}
           exportFilename={`inventory-report-${format(parseISO(from), 'yyyyMMdd')}-${format(parseISO(to), 'yyyyMMdd')}.csv`}
+          exportDate={(movement) => movement.occurredAt}
+          exportInitialFrom={from}
+          exportInitialTo={to}
           initialSort={{ key: 'date', direction: 'desc' }}
           emptyTitle="No inventory movements in this period"
           emptyDescription="Purchases, issues, wastage, transfers and counts appear here."
@@ -243,6 +249,9 @@ export function OperationsReports({
           searchPlaceholder="Search delivery, customer or staff…"
           searchFields={(delivery) => [delivery.deliveryNumber, delivery.customerName, delivery.assignedToName, delivery.status]}
           exportFilename={`delivery-report-${format(parseISO(from), 'yyyyMMdd')}-${format(parseISO(to), 'yyyyMMdd')}.csv`}
+          exportDate={(delivery) => delivery.scheduledAt}
+          exportInitialFrom={from}
+          exportInitialTo={to}
           initialSort={{ key: 'scheduled', direction: 'asc' }}
           emptyTitle="No deliveries in this period"
           emptyDescription="Deliveries scheduled in the selected range appear here."
@@ -262,6 +271,9 @@ export function OperationsReports({
             searchPlaceholder="Search expense or head…"
             searchFields={(expense) => [expense.expenseNumber, expense.head, expense.notes]}
             exportFilename={`expense-report-${format(parseISO(from), 'yyyyMMdd')}-${format(parseISO(to), 'yyyyMMdd')}.csv`}
+            exportDate={(expense) => expense.paidAt}
+            exportInitialFrom={from}
+            exportInitialTo={to}
             emptyTitle="No expenses in this period"
             emptyDescription="Posted and voided expenses paid in the range appear here."
             mobileTitle={(expense) => expense.expenseNumber}
@@ -276,6 +288,9 @@ export function OperationsReports({
             searchPlaceholder="Search session or staff…"
             searchFields={(session) => [session.sessionNumber, session.openedByName, session.handedOverTo]}
             exportFilename={`cash-report-${format(parseISO(from), 'yyyyMMdd')}-${format(parseISO(to), 'yyyyMMdd')}.csv`}
+            exportDate={(session) => session.openedAt}
+            exportInitialFrom={from}
+            exportInitialTo={to}
             emptyTitle="No cash sessions in this period"
             emptyDescription="Open and closed cash sessions appear here with expected cash and variance."
             mobileTitle={(session) => session.sessionNumber}

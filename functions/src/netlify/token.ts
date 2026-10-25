@@ -41,6 +41,17 @@ export async function authenticateRequest(
     return decoded.uid
   } catch (error) {
     if (error instanceof OperationError) throw error
+    // Server-side diagnostic only. The raw code is safe to log and tells the
+    // operator whether the Admin SDK lacks credentials, the token is expired,
+    // or the client/function projects do not match. Never log the token.
+    const code = error && typeof error === 'object' && 'code' in error
+      ? String((error as { code: unknown }).code)
+      : 'unknown'
+    const name = error instanceof Error ? error.name : typeof error
+    const message = error instanceof Error
+      ? error.message.slice(0, 300)
+      : String(error).slice(0, 300)
+    console.warn('[trusted-operation] Firebase token verification failed', { code, name, message })
     // Deliberately do not distinguish an expired token from a forged one in
     // the response: both require the operator to sign in again, and the raw
     // Firebase error can contain implementation details.

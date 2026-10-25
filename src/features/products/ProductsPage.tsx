@@ -5,8 +5,7 @@ import { toast } from 'sonner'
 import { useAuth } from '@/auth/AuthProvider'
 import { useWorkspace } from '@/auth/WorkspaceProvider'
 import { hasPermission } from '@/auth/permissions'
-import { useCollectionData } from '@/data/hooks'
-import { productsQuery } from '@/data/queries'
+import { useProductCatalogue } from '@/data/productCatalogue'
 import { setProductsActive } from '@/data/products'
 import type { Product } from '@/types/models'
 import { PageHeader } from '@/components/ui/PageHeader'
@@ -34,11 +33,7 @@ export function ProductsPage() {
   const [busy, setBusy] = useState(false)
 
   const outletId = selectedOutletId ?? ''
-  const products = useCollectionData<Product>(
-    () => (profile && outletId ? productsQuery(outletId, profile, 500) : null),
-    [profile?.uid, outletId, profile?.role, profile?.departmentIds.join(',')],
-    Boolean(profile && outletId),
-  )
+  const products = useProductCatalogue(profile, outletId)
 
   const rows = useMemo(() => {
     return products.rows.filter((product) => {
@@ -202,7 +197,7 @@ export function ProductsPage() {
         error={products.error}
         onRetry={products.reload}
         searchPlaceholder="Search product, alias, category or group…"
-        searchFields={(product) => [product.name, product.alias, product.printName, product.category, product.group, product.hsn]}
+        searchFields={(product) => [product.name, product.alias, product.printName, product.sku, product.category, product.group, product.hsn, product.id]}
         exportFilename={`products-${selectedOutlet?.code ?? 'outlet'}.csv`}
         emptyTitle="No products yet"
         emptyDescription="Add products so staff can sell them from the order entry screen. Products can be scoped to one or both outlets."
@@ -238,6 +233,11 @@ export function ProductsPage() {
               <option value="unavailable">Temporarily unavailable</option>
               <option value="low">Low stock</option>
             </select>
+            {products.hasMore && (
+              <Button size="sm" variant="outline" onClick={products.loadMore} loading={products.loading}>
+                Load more ({products.loaded} loaded)
+              </Button>
+            )}
           </>
         }
         initialSort={{ key: 'product', direction: 'asc' }}

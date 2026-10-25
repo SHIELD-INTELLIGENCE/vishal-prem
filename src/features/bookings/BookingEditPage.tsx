@@ -16,7 +16,8 @@ import { useAuth } from '@/auth/AuthProvider'
 import { useWorkspace } from '@/auth/WorkspaceProvider'
 import { hasPermission, scopedDepartments } from '@/auth/permissions'
 import { useCollectionData, useDocumentData } from '@/data/hooks'
-import { customersQuery, productsQuery } from '@/data/queries'
+import { useProductCatalogue } from '@/data/productCatalogue'
+import { customersQuery } from '@/data/queries'
 import { updateBookingDetailsSecure } from '@/data/bookings'
 import { calculateLine, resolveOrderDiscount } from '@/lib/calculations'
 import { bookingEditSchema, type BookingEditValues } from '@/lib/validation'
@@ -65,11 +66,7 @@ export function BookingEditPage() {
     () => scopedDepartments(profile, departments, outletId),
     [profile, departments, outletId],
   )
-  const productsState = useCollectionData<Product>(
-    () => (profile && outletId ? productsQuery(outletId, profile, 500) : null),
-    [profile?.uid, outletId, profile?.role, profile?.departmentIds.join(',')],
-    Boolean(profile && outletId),
-  )
+  const productsState = useProductCatalogue(profile, outletId)
   const customersState = useCollectionData<Customer>(
     () => (outletId ? customersQuery(outletId, 500) : null),
     [outletId],

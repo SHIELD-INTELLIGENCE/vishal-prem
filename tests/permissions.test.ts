@@ -7,6 +7,7 @@ import {
   hasPermission,
   isDepartmentAdmin,
   isSuperAdmin,
+  normalizePermissionMap,
   roleDefinition,
   scopedDepartments,
 } from '@/auth/permissions'
@@ -80,6 +81,42 @@ describe('role permissions', () => {
     expect(defaultPermissionsForRole('manager').inventoryAdjust).toBe(false)
     expect(defaultPermissionsForRole('cake_admin').inventoryAdjust).toBe(false)
     expect(defaultPermissionsForRole('accountant').inventoryAdjust).toBe(false)
+  })
+})
+
+describe('legacy profile permission normalization', () => {
+  it('gives a legacy Super Admin every permission without a stored map', () => {
+    expect(normalizePermissionMap('super_admin', undefined, {})).toEqual(ALL_PERMISSIONS)
+  })
+
+  it('derives non-admin permissions from legacy top-level flags', () => {
+    const map = normalizePermissionMap('manager', undefined, {
+      ordersView: true,
+      labelsManage: true,
+      usersManage: false,
+    })
+
+    expect(map.ordersView).toBe(true)
+    expect(map.labelsManage).toBe(true)
+    expect(map.usersManage).toBe(false)
+    expect(map.settingsManage).toBe(false)
+  })
+
+  it('keeps the canonical stored map authoritative over stale legacy flags', () => {
+    const map = normalizePermissionMap(
+      'manager',
+      { ...defaultPermissionsForRole('manager'), usersManage: false },
+      { usersManage: true },
+    )
+
+    expect(map.usersManage).toBe(false)
+  })
+
+  it('treats a malformed stored map as absent and denies by default', () => {
+    const map = normalizePermissionMap('manager', ['labelsManage'], {})
+
+    expect(map.labelsManage).toBe(false)
+    expect(map.usersManage).toBe(false)
   })
 })
 

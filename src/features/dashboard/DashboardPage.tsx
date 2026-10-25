@@ -30,15 +30,15 @@ import { useWorkspace } from '@/auth/WorkspaceProvider'
 import { useAuth } from '@/auth/AuthProvider'
 import { hasPermission } from '@/auth/permissions'
 import { useCollectionData } from '@/data/hooks'
+import { useProductCatalogue } from '@/data/productCatalogue'
 import {
   bookingsQuery,
   customersQuery,
   ordersQuery,
   paymentsQuery,
-  productsQuery,
   usersQuery,
 } from '@/data/queries'
-import type { Booking, Customer, Order, OrderStatus, Payment, Product, UserProfile } from '@/types/models'
+import type { Booking, Customer, Order, OrderStatus, Payment, UserProfile } from '@/types/models'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { StatCard } from '@/components/ui/StatCard'
 import { GettingStarted } from './GettingStarted'
@@ -69,11 +69,7 @@ export function DashboardPage() {
     [profile?.uid, outletId, profile?.role, profile?.departmentIds.join(',')],
     Boolean(profile && outletId),
   )
-  const products = useCollectionData<Product>(
-    () => (profile && outletId ? productsQuery(outletId, profile, 500) : null),
-    [profile?.uid, outletId, profile?.role, profile?.departmentIds.join(',')],
-    Boolean(profile && outletId),
-  )
+  const products = useProductCatalogue(profile, outletId)
   const customers = useCollectionData<Customer>(
     () => (profile && outletId && hasPermission(profile, 'customersView') ? customersQuery(outletId, 1) : null),
     [outletId, profile?.uid, profile?.role],

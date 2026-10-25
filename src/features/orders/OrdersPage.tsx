@@ -184,6 +184,7 @@ export function OrdersPage() {
         searchPlaceholder="Search order number, customer or phone…"
         searchFields={(order) => [order.orderNumber, order.customerName, order.customerPhone, order.notes, ...order.lines.map((line) => line.name)]}
         exportFilename={`orders-${selectedOutlet?.code ?? 'outlet'}-${format(new Date(), 'yyyyMMdd')}.csv`}
+        exportDate={(order) => order.createdAt}
         emptyTitle="No orders yet"
         emptyDescription="Counter orders will appear here after the first sale. Use New order to enter one."
         emptyHelp="orders"

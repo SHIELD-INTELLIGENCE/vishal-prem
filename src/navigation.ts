@@ -10,7 +10,11 @@ import {
   LayoutDashboard,
   Package,
   PackageSearch,
+  Printer,
   ReceiptText,
+  ScanBarcode,
+  Scale,
+  Tags,
   Truck,
   Settings2,
   ShieldCheck,
@@ -60,6 +64,21 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    label: 'Printing & Labels',
+    items: [
+      { to: adminPath('/labels/items'), label: 'Item & barcode labels', icon: ScanBarcode, permission: 'labelsView', description: 'Print item labels and barcodes' },
+      { to: adminPath('/labels/accounts'), label: 'Account labels', icon: Tags, permission: 'labelsView', description: 'Print customer and party labels' },
+      { to: adminPath('/labels/usage'), label: 'Label usage', icon: Printer, permission: 'labelsView', description: 'Record applied, damaged and returned labels' },
+      { to: adminPath('/labels/reconciliation'), label: 'Label reconciliation', icon: ChartNoAxesCombined, permission: 'labelsView', description: 'Printed vs applied and discrepancies' },
+    ],
+  },
+  {
+    label: 'Purchases & GST',
+    items: [
+      { to: adminPath('/purchases'), label: 'Purchase vouchers', icon: ReceiptText, permission: 'purchasesView', description: 'Supplier invoices, tax and stock' },
+    ],
+  },
+  {
     label: 'Catalogue',
     items: [
       { to: adminPath('/products'), label: 'Products', icon: Package, permission: 'productsView', description: 'Product master and pricing' },
@@ -76,6 +95,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'Reports',
     items: [
       { to: adminPath('/reports'), label: 'Reports', icon: ChartNoAxesCombined, permission: 'reportsView', description: 'Sales and operations reports' },
+      { to: adminPath('/reports/business'), label: 'Inventory, analysis & GST', icon: Scale, permission: 'reportsView', description: 'Stock windows, margins and GST position' },
       { to: adminPath('/busy'), label: 'Accounting export', icon: BookOpenCheck, permission: 'busyView', description: 'Export sales and payments' },
     ],
   },
@@ -126,6 +146,12 @@ export function routeTitle(pathname: string): string {
   if (path === '/payments') return 'Payments'
   if (path === '/production') return 'Production'
   if (path === '/inventory') return 'Inventory'
+  if (path === '/labels/items') return 'Item & barcode labels'
+  if (path === '/labels/accounts') return 'Account labels'
+  if (path === '/labels/usage') return 'Label usage'
+  if (path === '/labels/reconciliation') return 'Label reconciliation'
+  if (path === '/purchases') return 'Purchase vouchers'
+  if (path === '/purchases/new') return 'New purchase'
   if (path === '/deliveries') return 'Deliveries'
   if (path === '/finance') return 'Finance'
   if (path.startsWith('/customers/new')) return 'New customer'
@@ -140,6 +166,7 @@ export function routeTitle(pathname: string): string {
   if (path === '/departments') return 'Departments'
   if (path === '/outlets') return 'Outlets'
   if (path === '/reports') return 'Reports'
+  if (path === '/reports/business') return 'Inventory, analysis & GST'
   if (path === '/users') return 'Staff & permissions'
   if (path === '/busy') return 'Accounting export'
   if (path === '/settings') return 'Settings'
@@ -158,6 +185,9 @@ export function breadcrumbTrail(pathname: string): Array<{ label: string; to?: s
   // Department workspaces are reachable by department operators who cannot open
   // the departments administration page, so do not link the crumb to it.
   if (/^\/departments\/[^/]+/.test(path)) return [{ label: 'Department workspace' }]
+  if (path.startsWith('/labels/')) {
+    return [{ label: 'Printing & labels' }, { label: routeTitle(pathname) }]
+  }
   const parts = path.split('/').filter(Boolean)
   const root = parts[0]
   const rootMap: Record<string, string> = {
@@ -166,6 +196,7 @@ export function breadcrumbTrail(pathname: string): Array<{ label: string; to?: s
     payments: 'Payments',
     production: 'Production',
     inventory: 'Inventory',
+    purchases: 'Purchases & GST',
     deliveries: 'Deliveries',
     finance: 'Finance',
     customers: 'Customers & parties',

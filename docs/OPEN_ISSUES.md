@@ -1,14 +1,20 @@
 # Open issues
 
+> **Simple explanation:** This is the shop's "pending repairs" notebook. These are not hidden bugs; they are known gaps with a temporary workaround. Read the workaround before using the affected feature.
+
 Known defects and behaviour gaps that are **not fixed** in the current build. Each entry states the observable
 behaviour, the operational risk, the interim instruction for staff, and the change that would close it. Nothing in
 this file is implemented by the current code; it is a record of what is still outstanding.
 
-Nothing here has been deployed. The workspace in this repository is the local build.
+The SPA and Functions are not deployed from this workspace. Firestore rules were deployed to `vishal-prem` on
+2026-10-25; composite indexes still need a project Owner/Editor. These open issues are code/workflow gaps, not
+deployment gaps.
 
 ---
 
 ## OI-001 — Order-sourced delivery keeps a stale customer address
+
+> **Simple explanation:** When you make a delivery slip from an order, the system copies the customer's address onto the slip once. If the customer later changes their address, the old slip still shows the old address. The driver can go to the wrong place. Before dispatch, compare the slip with the customer's current address.
 
 | Field | Value |
 | --- | --- |
@@ -74,6 +80,8 @@ recorded here, not built.
 ---
 
 ## OI-002 — Reconciliation of failed, returned and partial deliveries is manual by policy
+
+> **Simple explanation:** If a delivery fails, comes back or is only partly delivered, the system marks it "pending" and stops. It does not automatically put stock back, refund money or write off the loss. The owner or accountant must decide and record that separately. This is deliberate, not a broken button.
 
 | Field | Value |
 | --- | --- |

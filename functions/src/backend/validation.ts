@@ -99,6 +99,41 @@ export type RecordOrderPaymentInput = z.infer<typeof recordOrderPaymentInputSche
 export type RecordBookingPaymentInput = z.infer<typeof recordBookingPaymentInputSchema>
 export type AdjustProductStockInput = z.infer<typeof adjustProductStockInputSchema>
 
+/**
+ * Converts an existing untracked product into a stock-tracked product.
+ *
+ * This is deliberately a trusted operation rather than a normal product edit:
+ * enabling tracking creates the first authoritative balance, so it needs the
+ * same permission, scope checks and append-only audit trail as a stock
+ * adjustment. The opening quantity may be zero.
+ */
+export const enableProductStockTrackingInputSchema = z
+  .object({
+    requestId: documentId,
+    productId: productDocumentId,
+    openingStock: z
+      .number()
+      .finite('Enter a valid opening stock.')
+      .min(0, 'Opening stock cannot be negative.')
+      .max(1_000_000, 'Opening stock is too large.'),
+    criticalStock: z
+      .number()
+      .finite('Enter a valid critical level.')
+      .min(0, 'Critical level cannot be negative.')
+      .max(1_000_000, 'Critical level is too large.')
+      .optional(),
+    reason: z
+      .string()
+      .trim()
+      .min(1, 'Explain why stock tracking is being enabled.')
+      .max(500, 'Keep the reason under 500 characters.'),
+  })
+  .strict()
+
+export type EnableProductStockTrackingInput = z.infer<
+  typeof enableProductStockTrackingInputSchema
+>
+
 export function parseInput<T>(schema: z.ZodType<T>, input: unknown): T {
   const result = schema.safeParse(input)
   if (!result.success) {
@@ -359,3 +394,228 @@ export const updateBookingFulfilmentInputSchema = z
   })
 
 export type UpdateBookingFulfilmentInput = z.infer<typeof updateBookingFulfilmentInputSchema>
+
+/* --------------------------------------------------------------------------
+ * Labels
+ * ------------------------------------------------------------------------ */
+
+const labelTemplateSchema = z
+  .object({
+    name: z.string().trim().min(1).max(60),
+    type: z.enum(['item', 'account']),
+    widthMm: z.number().finite().min(25).max(150),
+    heightMm: z.number().finite().min(10).max(100),
+    marginMm: z.number().finite().min(0).max(10),
+    columns: z.number().int().min(1).max(4),
+    showName: z.boolean(),
+    showSku: z.boolean(),
+    showPrice: z.boolean(),
+    showMrp: z.boolean(),
+    showAddress: z.boolean(),
+    showPhone: z.boolean(),
+    showUnit: z.boolean().optional(),
+    showBatch: z.boolean().optional(),
+    showMfgDate: z.boolean().optional(),
+    showExpiryDate: z.boolean().optional(),
+    barcodeFormat: z.enum(['code128', 'none']),
+  })
+  .strict()
+
+const labelDateSchema = z
+  .string()
+  .trim()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Use a YYYY-MM-DD date.')
+  .refine((value) => !Number.isNaN(Date.parse(`${value}T00:00:00Z`)), 'Enter a valid date.')
+
+const labelLineIdSchema = z.string().trim().min(1).max(180)
+
+const labelPrintLinesSchema = z
+  .array(
+    z
+      .object({
+        lineId: labelLineIdSchema,
+        quantity: z.number().int().min(0).max(500),
+      })
+      .strict(),
+  )
+  .min(1)
+  .max(50)
+
+export const labelOperationInputSchema = z.discriminatedUnion('action', [
+  z
+    .object({
+      action: z.literal('create'),
+      requestId: documentId,
+      jobType: z.enum(['item', 'account']),
+      outletId: outletIdSchema,
+      departmentId: z.string().trim().max(128).optional(),
+      template: labelTemplateSchema,
+      lines: z
+        .array(
+          z
+            .object({
+              refId: z.string().trim().min(1).max(128),
+              requestedQty: z.number().int().min(1).max(500),
+              batchNumber: z.string().trim().max(60).optional(),
+              manufacturedAt: labelDateSchema.optional(),
+              expiryAt: labelDateSchema.optional(),
+              netQuantity: z.string().trim().max(40).optional(),
+            })
+            .strict(),
+        )
+        .min(1)
+        .max(50),
+      note: z.string().trim().max(300).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal('confirm'),
+      jobId: documentId,
+      lines: labelPrintLinesSchema,
+      note: z.string().trim().max(300).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal('reprint'),
+      jobId: documentId,
+      lines: labelPrintLinesSchema,
+      reason: z.string().trim().min(1).max(300),
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal('void'),
+      jobId: documentId,
+      eventId: documentId,
+      reason: z.string().trim().min(1).max(300),
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal('usage'),
+      requestId: documentId,
+      jobId: documentId,
+      lineId: labelLineIdSchema,
+      usageAction: z.enum(['apply', 'damage', 'return_unused']),
+      quantity: z.number().int().min(1).max(500),
+      note: z.string().trim().max(300).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal('adjust'),
+      jobId: documentId,
+      lineId: labelLineIdSchema,
+      category: z.enum(['applied', 'damaged', 'returned']),
+      delta: z
+        .number()
+        .int()
+        .min(-500)
+        .max(500)
+        .refine((value) => value !== 0, 'Enter a non-zero correction.'),
+      reason: z.string().trim().min(1).max(300),
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal('close'),
+      jobId: documentId,
+      note: z.string().trim().max(300).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal('reopen'),
+      jobId: documentId,
+      reason: z.string().trim().min(1).max(300),
+    })
+    .strict(),
+])
+
+export type LabelOperationInput = z.infer<typeof labelOperationInputSchema>
+
+/* --------------------------------------------------------------------------
+ * Purchases and supplier payments
+ * ------------------------------------------------------------------------ */
+
+const purchaseTreatment = z.enum([
+  'regular',
+  'exempt',
+  'nil_rated',
+  'zero_rated',
+  'reverse_charge',
+  'stock_transfer',
+])
+
+const isoDateInput = z
+  .string()
+  .trim()
+  .min(8)
+  .max(40)
+  .refine((value) => Number.isFinite(Date.parse(value)), 'Enter a valid date and time.')
+
+export const purchaseOperationInputSchema = z.discriminatedUnion('action', [
+  z
+    .object({
+      action: z.literal('post'),
+      requestId: documentId,
+      outletId: outletIdSchema,
+      departmentId: z.string().trim().min(1).max(128),
+      supplierId: z.string().trim().max(128).optional(),
+      invoiceNumber: z.string().trim().min(1).max(80),
+      invoiceDate: isoDateInput,
+      receivedAt: isoDateInput,
+      taxTreatment: purchaseTreatment,
+      supplyType: z.enum(['intra_state', 'inter_state']),
+      itcClaimable: z.boolean(),
+      notes: z.string().trim().max(500).optional(),
+      lines: z
+        .array(
+          z
+            .object({
+              itemType: z.enum(['inventory', 'product']),
+              itemId: z.string().trim().min(1).max(128),
+              quantity: z.number().finite().positive().max(1_000_000),
+              ratePaise: z.number().int().min(0).max(1_000_000_000),
+              discountPercent: z.number().finite().min(0).max(100),
+              taxPercent: z.number().finite().min(0).max(100),
+              taxInclusive: z.boolean(),
+            })
+            .strict(),
+        )
+        .min(1)
+        .max(100),
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal('cancel'),
+      purchaseId: documentId,
+      reason: z.string().trim().min(1).max(300),
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal('supplier_payment'),
+      requestId: documentId,
+      supplierId: z.string().trim().min(1).max(128),
+      outletId: outletIdSchema,
+      amountPaise: z.number().int().positive().max(1_000_000_000),
+      mode: z.enum(PAYMENT_MODES),
+      reference: z.string().trim().max(80).optional(),
+      paidAt: isoDateInput,
+      notes: z.string().trim().max(300).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal('void_payment'),
+      paymentId: documentId,
+      reason: z.string().trim().min(1).max(300),
+    })
+    .strict(),
+])
+
+export type PurchaseOperationInput = z.infer<typeof purchaseOperationInputSchema>
